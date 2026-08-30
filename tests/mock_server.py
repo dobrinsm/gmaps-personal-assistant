@@ -2,12 +2,10 @@
 batch. Serves the real frontend plus scripted /api responses — no GCP, no
 network. Used ONLY by tests/browser_e2e_remediation.py.
 """
-import json
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
 
 FRONTEND = os.path.join(os.path.dirname(__file__), "..", "frontend")
 
