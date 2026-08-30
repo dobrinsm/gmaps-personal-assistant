@@ -900,3 +900,101 @@ body {
 .history-divider span {
   white-space: nowrap;
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   Responsive layout (F-05) — the workspace previously had no breakpoints
+   at all, squeezing the Agent Notebook into a ~28px sliver on phones.
+   Strategy: stack the two panes vertically below 900px, let the page
+   scroll naturally, and keep every touch target ≥44px on coarse pointers.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
+
+  .app-layout {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  /* Navbar: wrap instead of crushing the brand against the actions */
+  .navbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+  .navbar .nav-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  /* Stack chat above notebook; both get usable full-width space */
+  .workspace {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .pane {
+    height: auto;
+    max-height: none;
+  }
+  .chat-pane {
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .chat-container {
+    height: auto;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .chat-input-area {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-primary);
+  }
+  .notebook-pane {
+    flex: 1;
+  }
+
+  /* Touch targets: chips and tabs must clear the ~44px guidance */
+  .chip-btn {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+  .tab-btn {
+    padding: 12px 10px;
+    font-size: 13px;
+    flex: 1;
+  }
+  .tab-header {
+    position: sticky;
+    top: 0;
+    background: var(--bg-surface);
+    z-index: 5;
+  }
+  .btn-thumb {
+    padding: 10px 12px;
+    min-height: 44px;
+  }
+  .btn-send, .btn {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .brand-title h1 {
+    font-size: 15px;
+  }
+  .badge-partner {
+    display: none; /* decorative label only; removes header wrap noise */
+  }
+  .btn-secondary, .btn-ghost {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .navbar .nav-actions .btn span:not(:first-child) {
+    display: none;
+  }
+}
