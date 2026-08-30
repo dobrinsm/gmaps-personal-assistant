@@ -80,6 +80,28 @@ window.addEventListener('DOMContentLoaded', () => {
   replayChatHistory();
 });
 
+// ─── Honest wait feedback (F-04 interim, F-08) ───────────────────────
+// First responses can take ~30s while Places + Gemini run server-side.
+// The static "Thinking…" card read as a frozen app; rotating stages keep
+// the wait legible without promising model-specific internals.
+const CHAT_WAIT_STAGES = [
+  'Understanding your request…',
+  'Searching Google Places…',
+  'Scoring candidates against your taste profile…',
+  'Curating the shortlist…',
+];
+function startWaitStageRotation(card) {
+  const el = card.querySelector('.sender-name span');
+  if (!el) return () => {};
+  let stage = 0;
+  el.textContent = CHAT_WAIT_STAGES[0];
+  const timer = setInterval(() => {
+    stage = (stage + 1) % CHAT_WAIT_STAGES.length;
+    el.textContent = CHAT_WAIT_STAGES[stage];
+  }, 6000);
+  return () => clearInterval(timer);
+}
+
 // ─── Chat history replay (F-03) ─────────────────────────────────────
 // The backend already persists every turn (see agent.py save_session_message)
 // but the UI never replayed it, so a refresh wiped the conversation while the
@@ -148,9 +170,18 @@ async function loadSessionData() {
   }
 }
 
-function renderUserProfile(tp) {
+function renderUserProfile(data) {
+  const tp = data && data.taste_profile;
   if (!tp) return;
-  profileSummary.textContent = tp.summary || 'Custom Taste Profile active.';
+  // F-07: distinguish a not-yet-built profile (backend default) from one the
+  // user actually earned by chatting or importing their Takeout.
+  if (data.is_default) {
+    profileSummary.textContent = 'No taste profile yet. Chat with the agent or import your Google Takeout to build one — the defaults below are starting points, not learned preferences.';
+    profileSummary.classList.add('profile-default');
+  } else {
+    profileSummary.textContent = tp.summary || 'Custom Taste Profile active.';
+    profileSummary.classList.remove('profile-default');
+  }
   
   // Weights
   const w = tp.weights || {};
@@ -256,17 +287,24 @@ function renderNotebook(nb) {
 }
 
 // Chat Submission
+let chatRequestInFlight = false; // F-04a: serialize chat submissions
 chatForm.addEventListener('submit', async (e) => {
   e.preventDefault();
+  if (chatRequestInFlight) return; // drop double-submits while a turn is pending
   const text = chatInput.value.trim();
   if (!text) return;
 
+  chatRequestInFlight = true;
+  btnSend.disabled = true;
+  chatInput.disabled = true;
   chatInput.value = '';
+  chatInput.placeholder = 'Waiting for the agent…';
   appendUserMessage(text);
   clarificationBar.classList.add('hidden');
 
   // Loading indicator
   const loadingCard = appendLoadingMessage();
+  const stopWaitStages = startWaitStageRotation(loadingCard);
 
   try {
     const res = await fetch(`${API_BASE}/api/chat`, {
@@ -288,12 +326,23 @@ chatForm.addEventListener('submit', async (e) => {
         renderNotebook(data.notebook);
       }
     } else {
-      appendErrorMessage('Failed to get response from Collaborative Agent.');
+      // F-10: name the failure, restore the user's text so the turn is not lost.
+      appendErrorMessage(`The agent couldn't process that (server error ${res.status}). Your message is back in the input box — try sending it again.`);
+      chatInput.value = text;
     }
   } catch (err) {
     loadingCard.remove();
     console.error('Chat error:', err);
-    appendErrorMessage('Connection error. Ensure the backend server is running.');
+    // F-10: distinguish offline from server errors; keep the user's text.
+    appendErrorMessage('You appear to be offline or the connection dropped. Your message is back in the input box — try again once you\'re connected.');
+    chatInput.value = text;
+  } finally {
+    stopWaitStages();
+    chatRequestInFlight = false;
+    btnSend.disabled = false;
+    chatInput.disabled = false;
+    chatInput.placeholder = 'Type your destination, mood, or reply to clarifying questions...';
+    chatInput.focus();
   }
 });
 
@@ -318,9 +367,10 @@ function appendLoadingMessage() {
     <div class="avatar">🤖</div>
     <div class="content">
       <div class="sender-name">Trip Partner <span>Thinking...</span></div>
-      <div class="text"><p>Synthesizing taste profile & querying Google Places...</p></div>
+      <div class="text"><p>This can take 10–30 seconds for a new destination — live Places results are being retrieved and scored.</p></div>
     </div>
   `;
+  card.setAttribute('aria-live', 'polite');
   chatContainer.appendChild(card);
   chatContainer.scrollTop = chatContainer.scrollHeight;
   return card;

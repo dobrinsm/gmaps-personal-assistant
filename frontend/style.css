@@ -907,6 +907,13 @@ body {
   color: var(--accent-orange);
 }
 
+/* Honest default-profile state (F-07) */
+.profile-default {
+  font-style: italic;
+  border-left: 3px solid var(--border-color);
+  padding-left: 10px;
+}
+
 /* ════════════════════════════════════════════════════════════════════
    Responsive layout (F-05) — the workspace previously had no breakpoints
    at all, squeezing the Agent Notebook into a ~28px sliver on phones.

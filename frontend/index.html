@@ -38,7 +38,7 @@
       <section class="pane chat-pane">
         <div class="pane-header">
           <h2>💬 Collaborative Discovery Stream</h2>
-          <span class="status-indicator live">● Gemini 3.5 Flash Active</span>
+          <span class="status-indicator live" id="agentStatusPill" title="Live status of the agent backend">● Agent Ready</span>
         </div>
 
         <div class="chat-container" id="chatContainer">
@@ -211,7 +211,8 @@
           <button class="btn-close" onclick="closeModal()">×</button>
         </div>
         <div class="modal-body">
-          <p>Upload your <strong>Google Takeout <code>.zip</code></strong> file directly (or uncompressed <code>Saved Places.json</code> / <code>Want to go.csv</code>). Gemini will analyze your places, cluster your preferences, and build an adaptive Taste Profile.</p>
+          <p>Upload your <strong>Google Takeout <code>.zip</code></strong> file directly (or uncompressed <code>Saved Places.json</code> / <code>Want to go.csv</code>). Your saved places will be analyzed to build an adaptive Taste Profile. <a href="https://takeout.google.com/" target="_blank" rel="noopener" class="modal-help-link">How to get your Takeout file ↗</a></p>
+          <p class="modal-steps">1. Open Google Takeout → 2. Select only <em>Maps (your places)</em> → 3. Export and upload the .zip here.</p>
           <div class="drop-zone" id="dropZone">
             <input type="file" id="fileInput" accept=".zip,.json,.geojson,.csv" />
             <div class="drop-text">
@@ -221,7 +222,7 @@
           </div>
           <div class="upload-status hidden" id="uploadStatus">
             <div class="spinner"></div>
-            <span>Analyzing places with Gemini 3.5 on Vertex AI...</span>
+            <span>Analyzing your places…</span>
           </div>
         </div>
       </div>
