@@ -77,7 +77,50 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 window.addEventListener('DOMContentLoaded', () => {
   loadUserProfile();
   loadSessionData();
+  replayChatHistory();
 });
+
+// ─── Chat history replay (F-03) ─────────────────────────────────────
+// The backend already persists every turn (see agent.py save_session_message)
+// but the UI never replayed it, so a refresh wiped the conversation while the
+// notebook survived — a contradictory, data-loss-looking state. Rebuild the
+// visible transcript from the session document on load.
+async function replayChatHistory() {
+  try {
+    const res = await fetch(`${API_BASE}/api/session/${currentSessionId}?user_id=${currentUserId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    const chatTurns = messages.filter(m =>
+      m && (m.role === 'user' || m.role === 'assistant') &&
+      (m.content || (Array.isArray(m.recommended_places) && m.recommended_places.length))
+    );
+    if (!chatTurns.length) return;
+
+    const divider = document.createElement('div');
+    divider.className = 'history-divider';
+    divider.setAttribute('role', 'separator');
+    divider.innerHTML = '<span>Restored conversation from your last visit</span>';
+    chatContainer.appendChild(divider);
+
+    chatTurns.forEach(m => {
+      if (m.role === 'user') {
+        appendUserMessage(m.content || '');
+      } else {
+        appendAgentResponse({
+          message: m.content || '',
+          // Stale clarifying questions are not re-asked on replay — the live
+          // agent re-issues them when relevant in the next turn.
+          clarifying_questions: [],
+          places: Array.isArray(m.recommended_places) ? m.recommended_places : []
+        }, { isReplay: true });
+      }
+    });
+  } catch (err) {
+    // Replay is best-effort: a fresh session must keep working offline.
+    console.error('History replay failed:', err);
+  }
+}
 
 async function loadUserProfile() {
   try {
@@ -283,7 +326,7 @@ function appendLoadingMessage() {
   return card;
 }
 
-function appendAgentResponse(data) {
+function appendAgentResponse(data, opts = {}) {
   const card = document.createElement('div');
   card.className = 'message-card agent';
 
@@ -336,8 +379,9 @@ function appendAgentResponse(data) {
   chatContainer.appendChild(card);
   chatContainer.scrollTop = chatContainer.scrollHeight;
 
-  // Handle Clarifying Questions
-  if (data.clarifying_questions && data.clarifying_questions.length > 0) {
+  // Handle Clarifying Questions (suppressed on history replay — stale
+  // questions must not re-open the dock for a turn that already happened).
+  if (!opts.isReplay && data.clarifying_questions && data.clarifying_questions.length > 0) {
     clarificationItems.innerHTML = '';
     data.clarifying_questions.forEach(q => {
       const qDiv = document.createElement('div');
