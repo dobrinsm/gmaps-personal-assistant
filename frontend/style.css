@@ -901,6 +901,12 @@ body {
   white-space: nowrap;
 }
 
+/* Reset button armed state (F-06 double-click-to-confirm) */
+#btnResetSession.confirming {
+  border-color: var(--accent-orange);
+  color: var(--accent-orange);
+}
+
 /* ════════════════════════════════════════════════════════════════════
    Responsive layout (F-05) — the workspace previously had no breakpoints
    at all, squeezing the Agent Notebook into a ~28px sliver on phones.

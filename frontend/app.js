@@ -533,26 +533,62 @@ async function handleFileUpload(file) {
     uploadStatus.classList.add('hidden');
     if (res.ok) {
       const data = await res.json();
-      alert(`🎉 Successfully analyzed ${data.count} saved places with Gemini on Vertex AI!\n\nTaste Profile updated: ${data.profile.taste_profile.summary}`);
       closeModal();
       loadUserProfile();
+      // F-06: blocking alert() froze the whole page; the result is now a
+      // non-blocking toast plus a jump to the Profile tab so the freshly
+      // built profile is actually visible where it happened.
+      showToast(`✅ Analyzed ${data.count} saved place${data.count === 1 ? '' : 's'} — taste profile updated.`, 6000);
+      const profileTabBtn = document.querySelector('.tab-btn[data-tab="profile"]');
+      if (profileTabBtn) profileTabBtn.click();
     } else {
       const errData = await res.json().catch(() => ({}));
-      alert(`Upload failed (${res.status}): ${errData.detail || 'Invalid file format'}`);
+      showToast(`⚠️ ${friendlyUploadError(res.status, errData.detail)}`, 8000);
     }
   } catch (err) {
     uploadStatus.classList.add('hidden');
     console.error('Upload network error:', err);
-    alert('Upload failed: Network error connecting to backend.');
+    showToast('⚠️ Upload failed — network error. Check your connection and try again.', 8000);
   }
 }
 
-btnResetSession.onclick = () => {
-  if (confirm('Start a fresh discovery session?')) {
-    currentSessionId = 'sess_' + Math.random().toString(36).substring(2, 9);
-    localStorage.setItem('gpa_session_id', currentSessionId);
-    window.location.reload();
+// F-06 companion: translate backend/JSON internals into user-actionable copy.
+function friendlyUploadError(status, detail) {
+  const d = String(detail || '');
+  if (d.includes('No saved places found')) {
+    return 'No saved places found in that file. Export "Saved places" from Google Takeout, then upload the .zip or the Saved Places.json inside it.';
   }
+  if (d.includes('Expecting value') || d.includes('Failed to process takeout export')) {
+    return 'That file doesn\'t look like a Google Takeout export. Upload the Takeout .zip (or Saved Places.json / Want to go.csv from inside it).';
+  }
+  if (status === 413) {
+    return 'That file is too large. Try uploading the Saved Places.json from inside your Takeout archive instead of the full .zip.';
+  }
+  return `Upload failed (${status}). Please check the file and try again.`;
+}
+
+btnResetSession.onclick = () => {
+  // F-06: native confirm() blocks the page and is inconsistent across
+  // platforms; a lightweight in-page confirmation keeps the flow visible.
+  if (!btnResetSession.dataset.confirming) {
+    btnResetSession.dataset.confirming = '1';
+    btnResetSession.classList.add('confirming');
+    const label = btnResetSession.querySelector('span:last-child') || btnResetSession;
+    btnResetSession.dataset.originalLabel = label.textContent;
+    label.textContent = 'Sure? Click again';
+    showToast('Click Reset again to start a fresh session. This clears the conversation view (your notebook data for this session stays in history).', 6000);
+    setTimeout(() => {
+      delete btnResetSession.dataset.confirming;
+      btnResetSession.classList.remove('confirming');
+      if (btnResetSession.dataset.originalLabel && label) label.textContent = btnResetSession.dataset.originalLabel;
+    }, 6000);
+    return;
+  }
+  delete btnResetSession.dataset.confirming;
+  btnResetSession.classList.remove('confirming');
+  currentSessionId = 'sess_' + Math.random().toString(36).substring(2, 9);
+  localStorage.setItem('gpa_session_id', currentSessionId);
+  window.location.reload();
 };
 
 // Utilities
@@ -835,11 +871,14 @@ if (btnDownloadKML) btnDownloadKML.addEventListener('click', downloadKML);
 if (btnDownloadCSV) btnDownloadCSV.addEventListener('click', downloadCSV);
 
 // Non-blocking toast (replaces blocking alert() for feedback/export notices)
-function showToast(message) {
+function showToast(message, durationMs = 4000) {
   let toastHost = document.getElementById('toastHost');
   if (!toastHost) {
     toastHost = document.createElement('div');
     toastHost.id = 'toastHost';
+    // F-16 companion: toasts are status changes — announce them politely.
+    toastHost.setAttribute('role', 'status');
+    toastHost.setAttribute('aria-live', 'polite');
     document.body.appendChild(toastHost);
   }
   const toast = document.createElement('div');
@@ -850,7 +889,7 @@ function showToast(message) {
   setTimeout(() => {
     toast.classList.remove('visible');
     setTimeout(() => toast.remove(), 300);
-  }, 4000);
+  }, durationMs);
 }
 
 // ─── "Learned from your feedback" chips ─────────────────────────
