@@ -527,7 +527,9 @@ body {
 
 .empty-hint {
   font-size: 12px;
-  color: var(--text-muted);
+  /* F-16: --text-muted (#6b7280) measured ~3.0:1 on card backgrounds; the
+     secondary tone clears 4.5:1 for this small italic text. */
+  color: var(--text-secondary);
   font-style: italic;
 }
 
@@ -626,6 +628,19 @@ body {
   font-size: 20px;
   color: var(--text-secondary);
   cursor: pointer;
+  /* F-16: visible focus + comfortable target for the modal close button. */
+  min-width: 44px;
+  min-height: 44px;
+}
+.btn-close:focus-visible,
+.chip-btn:focus-visible,
+.tab-btn:focus-visible,
+.btn:focus-visible,
+.btn-thumb:focus-visible,
+.clarification-item:focus-visible,
+.drop-zone:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 
 .drop-zone {
@@ -879,4 +894,188 @@ body {
   background: rgba(34, 197, 94, 0.12);
   border: 1px solid rgba(34, 197, 94, 0.35);
   color: #86efac;
+}
+
+/* ─── Restored-history divider (F-03) ────────────────────────────── */
+.history-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0 14px;
+  color: var(--text-secondary, #a1a1aa);
+  font-size: 12px;
+}
+.history-divider::before,
+.history-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-color, rgba(255, 255, 255, 0.08));
+}
+.history-divider span {
+  white-space: nowrap;
+}
+
+/* Reset button armed state (F-06 double-click-to-confirm) */
+#btnResetSession.confirming {
+  border-color: var(--accent-orange);
+  color: var(--accent-orange);
+}
+
+/* Honest default-profile state (F-07) */
+.profile-default {
+  font-style: italic;
+  border-left: 3px solid var(--border-color);
+  padding-left: 10px;
+}
+
+/* Empty learned-chips section renders nothing at all (F-21) */
+#nbLearned.empty {
+  display: none;
+}
+
+/* Price line on place cards (F-09) */
+.place-price {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* Takeout modal helper copy (F-18) */
+.modal-steps {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.modal-help-link {
+  color: var(--accent-blue);
+  text-decoration: underline;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Responsive layout (F-05) — the workspace previously had no breakpoints
+   at all, squeezing the Agent Notebook into a ~28px sliver on phones.
+   Strategy: stack the two panes vertically below 900px, let the page
+   scroll naturally, and keep every touch target ≥44px on coarse pointers.
+   ════════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+  }
+
+  .app-layout {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  /* Navbar: wrap instead of crushing the brand against the actions */
+  .navbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+  .navbar .nav-actions {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  /* Stack chat above notebook; both get usable full-width space */
+  .workspace {
+    flex-direction: column;
+    overflow: visible;
+  }
+  .pane {
+    height: auto;
+    max-height: none;
+  }
+  .chat-pane {
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+  }
+  .chat-container {
+    height: auto;
+    max-height: 60vh;
+    overflow-y: auto;
+  }
+  .chat-input-area {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-primary);
+  }
+  .notebook-pane {
+    flex: 1;
+  }
+
+  /* Touch targets: chips and tabs must clear the ~44px guidance */
+  .chip-btn {
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+  .tab-btn {
+    padding: 12px 10px;
+    font-size: 13px;
+    flex: 1;
+  }
+  .tab-header {
+    position: sticky;
+    top: 0;
+    background: var(--bg-surface);
+    z-index: 5;
+  }
+  .btn-thumb {
+    padding: 10px 12px;
+    min-height: 44px;
+  }
+  .btn-send, .btn {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  .brand-title h1 {
+    font-size: 15px;
+  }
+  .badge-partner {
+    display: none; /* decorative label only; removes header wrap noise */
+  }
+  .btn-secondary, .btn-ghost {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .navbar .nav-actions .btn span:not(:first-child) {
+    display: none;
+  }
+}
+
+/* ─── Accessibility helpers (F-16) ────────────────────────────────── */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.clarification-item {
+  cursor: pointer;
+}
+.clarification-item:hover {
+  border-color: var(--accent-blue);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

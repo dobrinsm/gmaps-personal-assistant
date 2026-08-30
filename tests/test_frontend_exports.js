@@ -25,7 +25,9 @@ const sandbox = {
   document: {
     getElementById(id) { if (!elements[id]) elements[id] = makeEl(id); return elements[id]; },
     querySelectorAll() { return []; },
+    querySelector() { return null; },
     createElement(tag) { return makeEl(`created-${tag}`); },
+    addEventListener() {},
     body: { appendChild() {}, removeChild() {} },
   },
   localStorage: {

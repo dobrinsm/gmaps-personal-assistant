@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%97%BA%EF%B8%8F%3C/text%3E%3C/svg%3E">
   <title>GMaps Personal Assistant — Collaborative Travel & Taste Agent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -38,7 +39,7 @@
       <section class="pane chat-pane">
         <div class="pane-header">
           <h2>💬 Collaborative Discovery Stream</h2>
-          <span class="status-indicator live">● Gemini 3.5 Flash Active</span>
+          <span class="status-indicator live" id="agentStatusPill" title="Live status of the agent backend">● Agent Ready</span>
         </div>
 
         <div class="chat-container" id="chatContainer">
@@ -71,10 +72,11 @@
 
         <!-- Chat Input Form -->
         <form class="chat-input-area" id="chatForm">
-          <input 
-            type="text" 
-            id="chatInput" 
-            placeholder="Type your destination, mood, or reply to clarifying questions..." 
+          <label class="visually-hidden" for="chatInput">Message to the travel agent</label>
+          <input
+            type="text"
+            id="chatInput"
+            placeholder="Type your destination, mood, or reply to clarifying questions..."
             autocomplete="off"
           />
           <button type="submit" id="btnSend" class="btn btn-primary">
@@ -183,7 +185,7 @@
         <!-- Tab 3: Itinerary Map & Export  -->
         <div class="tab-content" id="tabMap">
           <div class="itinerary-export-bar">
-            <span class="itinerary-hint" id="itineraryHint">Shortlist stops appear on the map in notebook order.</span>
+            <span class="itinerary-hint" id="itineraryHint">Map pins follow notebook order. KML/CSV exports are sorted by score (best first).</span>
             <div class="export-buttons">
               <button id="btnOpenInMaps" class="btn btn-secondary" disabled title="Opens directions for the first 10 stops">🗺️ Open in Google Maps</button>
               <button id="btnDownloadKML" class="btn btn-secondary" disabled title="Full set — import into My Maps">📍 KML</button>
@@ -203,17 +205,19 @@
     </main>
 
     <!-- Upload Takeout Modal -->
-    <div class="modal hidden" id="uploadModal">
+    <div class="modal hidden" id="uploadModal" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
       <div class="modal-backdrop" onclick="closeModal()"></div>
       <div class="modal-card">
         <div class="modal-header">
-          <h3>📤 Import Google Maps Saved Places</h3>
-          <button class="btn-close" onclick="closeModal()">×</button>
+          <h3 id="uploadModalTitle">📤 Import Google Maps Saved Places</h3>
+          <button type="button" class="btn-close" onclick="closeModal()" aria-label="Close upload dialog">×</button>
         </div>
         <div class="modal-body">
-          <p>Upload your <strong>Google Takeout <code>.zip</code></strong> file directly (or uncompressed <code>Saved Places.json</code> / <code>Want to go.csv</code>). Gemini will analyze your places, cluster your preferences, and build an adaptive Taste Profile.</p>
+          <p>Upload your <strong>Google Takeout <code>.zip</code></strong> file directly (or uncompressed <code>Saved Places.json</code> / <code>Want to go.csv</code>). Your saved places will be analyzed to build an adaptive Taste Profile. <a href="https://takeout.google.com/" target="_blank" rel="noopener" class="modal-help-link">How to get your Takeout file ↗</a></p>
+          <p class="modal-steps">1. Open Google Takeout → 2. Select only <em>Maps (your places)</em> → 3. Export and upload the .zip here.</p>
           <div class="drop-zone" id="dropZone">
-            <input type="file" id="fileInput" accept=".zip,.json,.geojson,.csv" />
+            <label class="visually-hidden" for="fileInput">Upload Google Takeout file (.zip, .json, or .csv)</label>
+          <input type="file" id="fileInput" accept=".zip,.json,.geojson,.csv" />
             <div class="drop-text">
               <span class="drop-icon">📦</span>
               <p>Drag and drop your <strong>Takeout .zip</strong> or JSON/CSV here, or <strong>browse files</strong></p>
@@ -221,7 +225,7 @@
           </div>
           <div class="upload-status hidden" id="uploadStatus">
             <div class="spinner"></div>
-            <span>Analyzing places with Gemini 3.5 on Vertex AI...</span>
+            <span>Analyzing your places…</span>
           </div>
         </div>
       </div>

@@ -53,6 +53,7 @@ const mapEmptyState = document.getElementById('mapEmptyState');
 const itineraryStops = document.getElementById('itineraryStops');
 
 const MAPS_DIR_MAX_STOPS = 10; // Google Maps directions stop limit
+const CHAT_INPUT_MAX = 5000; // F-20: guard against runaway prompts/costs
 
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -77,14 +78,79 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 window.addEventListener('DOMContentLoaded', () => {
   loadUserProfile();
   loadSessionData();
+  replayChatHistory();
 });
+
+// ─── Honest wait feedback (F-04 interim, F-08) ───────────────────────
+// First responses can take ~30s while Places + Gemini run server-side.
+// The static "Thinking…" card read as a frozen app; rotating stages keep
+// the wait legible without promising model-specific internals.
+const CHAT_WAIT_STAGES = [
+  'Understanding your request…',
+  'Searching Google Places…',
+  'Scoring candidates against your taste profile…',
+  'Curating the shortlist…',
+];
+function startWaitStageRotation(card) {
+  const el = card.querySelector('.sender-name span');
+  if (!el) return () => {};
+  let stage = 0;
+  el.textContent = CHAT_WAIT_STAGES[0];
+  const timer = setInterval(() => {
+    stage = (stage + 1) % CHAT_WAIT_STAGES.length;
+    el.textContent = CHAT_WAIT_STAGES[stage];
+  }, 6000);
+  return () => clearInterval(timer);
+}
+
+// ─── Chat history replay (F-03) ─────────────────────────────────────
+// The backend already persists every turn (see agent.py save_session_message)
+// but the UI never replayed it, so a refresh wiped the conversation while the
+// notebook survived — a contradictory, data-loss-looking state. Rebuild the
+// visible transcript from the session document on load.
+async function replayChatHistory() {
+  try {
+    const res = await fetch(`${API_BASE}/api/session/${currentSessionId}?user_id=${currentUserId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const messages = Array.isArray(data.messages) ? data.messages : [];
+    const chatTurns = messages.filter(m =>
+      m && (m.role === 'user' || m.role === 'assistant') &&
+      (m.content || (Array.isArray(m.recommended_places) && m.recommended_places.length))
+    );
+    if (!chatTurns.length) return;
+
+    const divider = document.createElement('div');
+    divider.className = 'history-divider';
+    divider.setAttribute('role', 'separator');
+    divider.innerHTML = '<span>Restored conversation from your last visit</span>';
+    chatContainer.appendChild(divider);
+
+    chatTurns.forEach(m => {
+      if (m.role === 'user') {
+        appendUserMessage(m.content || '');
+      } else {
+        appendAgentResponse({
+          message: m.content || '',
+          // Stale clarifying questions are not re-asked on replay — the live
+          // agent re-issues them when relevant in the next turn.
+          clarifying_questions: [],
+          places: Array.isArray(m.recommended_places) ? m.recommended_places : []
+        }, { isReplay: true });
+      }
+    });
+  } catch (err) {
+    // Replay is best-effort: a fresh session must keep working offline.
+    console.error('History replay failed:', err);
+  }
+}
 
 async function loadUserProfile() {
   try {
     const res = await fetch(`${API_BASE}/api/profile/${currentUserId}`);
     if (res.ok) {
       const data = await res.json();
-      renderUserProfile(data.taste_profile);
+      renderUserProfile(data);
     }
   } catch (err) {
     console.error('Failed to load user profile:', err);
@@ -105,9 +171,18 @@ async function loadSessionData() {
   }
 }
 
-function renderUserProfile(tp) {
+function renderUserProfile(data) {
+  const tp = data && data.taste_profile;
   if (!tp) return;
-  profileSummary.textContent = tp.summary || 'Custom Taste Profile active.';
+  // F-07: distinguish a not-yet-built profile (backend default) from one the
+  // user actually earned by chatting or importing their Takeout.
+  if (data.is_default) {
+    profileSummary.textContent = 'No taste profile yet. Chat with the agent or import your Google Takeout to build one — the defaults below are starting points, not learned preferences.';
+    profileSummary.classList.add('profile-default');
+  } else {
+    profileSummary.textContent = tp.summary || 'Custom Taste Profile active.';
+    profileSummary.classList.remove('profile-default');
+  }
   
   // Weights
   const w = tp.weights || {};
@@ -144,6 +219,40 @@ function renderTagList(container, tags) {
   });
 }
 
+// ─── Display helpers (F-09/F-17) ────────────────────────────────────
+// Humanize raw Google price-level enums; keep exports and cards readable.
+function humanizePriceLevel(raw) {
+  if (!raw) return '';
+  const key = String(raw).toUpperCase().replace(/^PRICE_LEVEL_/, '');
+  const map = {
+    FREE: 'Free',
+    INEXPENSIVE: 'Inexpensive ($)',
+    MODERATE: 'Moderate ($$)',
+    EXPENSIVE: 'Expensive ($$$)',
+    VERY_EXPENSIVE: 'Very expensive ($$$$)',
+  };
+  return map[key] || String(raw).toLowerCase().replace(/_/g, ' ');
+}
+
+// Internal notebook keys → human labels (F-17). Unknown keys pass through.
+function humanizePrefKey(key) {
+  const map = {
+    fancy_level: 'Fancy level',
+    occasion_vibe: 'Occasion & vibe',
+    vibe: 'Vibe',
+    occasion: 'Occasion',
+    budget: 'Budget',
+    dietary: 'Dietary',
+    pace: 'Pace',
+    group_type: 'Group type',
+    transport: 'Transport',
+    cuisine: 'Cuisine',
+    neighborhood: 'Neighborhood',
+  };
+  const k = String(key);
+  return map[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 function renderNotebook(nb) {
   if (!nb) return;
   currentNotebook = nb; // keep the latest notebook for map/export layer
@@ -159,13 +268,17 @@ function renderNotebook(nb) {
     prefKeys.forEach(k => {
       const span = document.createElement('span');
       span.className = 'tag-pill';
-      span.textContent = `${k}: ${prefs[k]}`;
+      // F-17: show human labels for internal notebook keys.
+      span.textContent = `${humanizePrefKey(k)}: ${prefs[k]}`;
       nbPreferences.appendChild(span);
     });
   }
 
   // "Learned from your feedback" chips (memory loop made visible)
   renderLearnedChips();
+  // F-21: don't render an empty bordered section before feedback exists.
+  const learnedSection = document.getElementById('nbLearned');
+  if (learnedSection && !learnedSection.innerHTML.trim()) learnedSection.classList.add('empty');
 
   // Notes
   const notes = nb.itinerary_notes || [];
@@ -193,13 +306,14 @@ function renderNotebook(nb) {
       const dualScore = (p.intent_score != null && p.taste_score != null)
         ? `I ${Math.round(p.intent_score)} · T ${Math.round(p.taste_score)} → ${Math.round((p.combined_score ?? 0) * 10) / 10}`
         : (p.taste_match_score != null ? `Match: ${p.taste_match_score}%` : '');
+      // F-01 hardening: shortlist names/reasons are external data — escape them.
       card.innerHTML = `
         <div class="place-header">
-          <div class="place-name">${p.name}</div>
-          <div class="place-score">★ ${p.rating || '4.5'}</div>
+          <div class="place-name">${escapeHtml(p.name)}</div>
+          <div class="place-score">★ ${escapeHtml(p.rating || '4.5')}</div>
         </div>
         ${dualScore ? `<div class="place-scores">${escapeHtml(dualScore)}${p.scored_by === 'heuristic' ? ' <span class="heuristic-tag">heuristic shortlist</span>' : ''}</div>` : ''}
-        <div class="place-reason">${p.match_reason || ''}</div>
+        <div class="place-reason">${escapeHtml(p.match_reason || '')}</div>
       `;
       nbShortlist.appendChild(card);
     });
@@ -212,17 +326,29 @@ function renderNotebook(nb) {
 }
 
 // Chat Submission
+let chatRequestInFlight = false; // F-04a: serialize chat submissions
 chatForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const text = chatInput.value.trim();
+  if (chatRequestInFlight) return; // drop double-submits while a turn is pending
+  let text = chatInput.value.trim();
   if (!text) return;
+  // F-20: soft input cap — overlong prompts risk timeouts and wasted spend.
+  if (text.length > CHAT_INPUT_MAX) {
+    text = text.slice(0, CHAT_INPUT_MAX);
+    showToast(`Message trimmed to the first ${CHAT_INPUT_MAX} characters.`, 5000);
+  }
 
+  chatRequestInFlight = true;
+  btnSend.disabled = true;
+  chatInput.disabled = true;
   chatInput.value = '';
+  chatInput.placeholder = 'Waiting for the agent…';
   appendUserMessage(text);
   clarificationBar.classList.add('hidden');
 
   // Loading indicator
   const loadingCard = appendLoadingMessage();
+  const stopWaitStages = startWaitStageRotation(loadingCard);
 
   try {
     const res = await fetch(`${API_BASE}/api/chat`, {
@@ -244,12 +370,23 @@ chatForm.addEventListener('submit', async (e) => {
         renderNotebook(data.notebook);
       }
     } else {
-      appendErrorMessage('Failed to get response from Collaborative Agent.');
+      // F-10: name the failure, restore the user's text so the turn is not lost.
+      appendErrorMessage(`The agent couldn't process that (server error ${res.status}). Your message is back in the input box — try sending it again.`);
+      chatInput.value = text;
     }
   } catch (err) {
     loadingCard.remove();
     console.error('Chat error:', err);
-    appendErrorMessage('Connection error. Ensure the backend server is running.');
+    // F-10: distinguish offline from server errors; keep the user's text.
+    appendErrorMessage('You appear to be offline or the connection dropped. Your message is back in the input box — try again once you\'re connected.');
+    chatInput.value = text;
+  } finally {
+    stopWaitStages();
+    chatRequestInFlight = false;
+    btnSend.disabled = false;
+    chatInput.disabled = false;
+    chatInput.placeholder = 'Type your destination, mood, or reply to clarifying questions...';
+    chatInput.focus();
   }
 });
 
@@ -274,15 +411,16 @@ function appendLoadingMessage() {
     <div class="avatar">🤖</div>
     <div class="content">
       <div class="sender-name">Trip Partner <span>Thinking...</span></div>
-      <div class="text"><p>Synthesizing taste profile & querying Google Places...</p></div>
+      <div class="text"><p>This can take 10–30 seconds for a new destination — live Places results are being retrieved and scored.</p></div>
     </div>
   `;
+  card.setAttribute('aria-live', 'polite');
   chatContainer.appendChild(card);
   chatContainer.scrollTop = chatContainer.scrollHeight;
   return card;
 }
 
-function appendAgentResponse(data) {
+function appendAgentResponse(data, opts = {}) {
   const card = document.createElement('div');
   card.className = 'message-card agent';
 
@@ -294,6 +432,9 @@ function appendAgentResponse(data) {
       const scoreDisplay = (p.intent_score != null && p.taste_score != null)
         ? `I ${Math.round(p.intent_score)} · T ${Math.round(p.taste_score)} → ${Math.round((p.combined_score ?? 0) * 10) / 10}`
         : `Match: ${p.taste_match_score || 0}%`;
+      // F-02 fix: data-* attributes + delegated listener instead of inline JS.
+      // Place context is registered once per place and referenced by token.
+      const placeToken = registerFeedbackPlace(p);
       placesHtml += `
         <div class="place-card">
           <div class="place-header">
@@ -307,13 +448,14 @@ function appendAgentResponse(data) {
             <div class="place-score">${escapeHtml(scoreDisplay)}${isHeuristic ? '<div class="heuristic-tag">heuristic shortlist</div>' : ''}</div>
           </div>
           <div class="place-reason">💡 ${escapeHtml(p.match_reason || '')}</div>
+          ${p.price_level ? `<div class="place-price">💵 ${escapeHtml(humanizePriceLevel(p.price_level))}</div>` : ''}
           <div class="place-actions">
             <div class="feedback-buttons">
-              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'like', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">👍 Love it</button>
-              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'too_touristy', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">🚩 Touristy</button>
-              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'wrong_vibe', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">🎭 Wrong Vibe</button>
+              <button type="button" class="btn-thumb" data-place-id="${escapeHtml(p.id)}" data-place-name="${escapeHtml(p.name)}" data-feedback-type="like" data-place-token="${placeToken}">👍 Love it</button>
+              <button type="button" class="btn-thumb" data-place-id="${escapeHtml(p.id)}" data-place-name="${escapeHtml(p.name)}" data-feedback-type="too_touristy" data-place-token="${placeToken}">🚩 Touristy</button>
+              <button type="button" class="btn-thumb" data-place-id="${escapeHtml(p.id)}" data-place-name="${escapeHtml(p.name)}" data-feedback-type="wrong_vibe" data-place-token="${placeToken}">🎭 Wrong Vibe</button>
             </div>
-            <a href="${p.maps_url}" target="_blank" class="maps-link">Open in Maps ↗</a>
+            <a href="${escapeHtml(p.maps_url || '')}" target="_blank" rel="noopener" class="maps-link">Open in Maps ↗</a>
           </div>
         </div>
       `;
@@ -332,16 +474,34 @@ function appendAgentResponse(data) {
   chatContainer.appendChild(card);
   chatContainer.scrollTop = chatContainer.scrollHeight;
 
-  // Handle Clarifying Questions
-  if (data.clarifying_questions && data.clarifying_questions.length > 0) {
+  // Handle Clarifying Questions (suppressed on history replay — stale
+  // questions must not re-open the dock for a turn that already happened).
+  if (!opts.isReplay && data.clarifying_questions && data.clarifying_questions.length > 0) {
     clarificationItems.innerHTML = '';
     data.clarifying_questions.forEach(q => {
       const qDiv = document.createElement('div');
       qDiv.className = 'clarification-item';
+      // F-16: clarifying questions are interactive — make them keyboard
+      // operable (button role + focus + Enter/Space activation).
+      qDiv.setAttribute('role', 'button');
+      qDiv.setAttribute('tabindex', '0');
+      qDiv.setAttribute('aria-label', `Use this question in your reply: ${q}`);
       qDiv.innerHTML = `<strong>❓ ${escapeHtml(q)}</strong>`;
-      qDiv.onclick = () => {
-        chatInput.value = `Regarding "${q}": `;
+      const applyPrefill = () => {
+        // F-14: don't clobber what the user is typing — append instead.
+        const prefix = `Regarding "${q}": `;
+        chatInput.value = chatInput.value.trim()
+          ? `${chatInput.value.trim()} ${prefix}`
+          : prefix;
         chatInput.focus();
+        chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+      };
+      qDiv.onclick = applyPrefill;
+      qDiv.onkeydown = (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          applyPrefill();
+        }
       };
       clarificationItems.appendChild(qDiv);
     });
@@ -364,6 +524,36 @@ function appendErrorMessage(msg) {
 }
 
 // Interactive Feedback Loop
+// F-02 fix: place context lives in a registry keyed by a token; buttons carry
+// data-* attributes. The previous inline-JS handler template produced
+// malformed HTML (the embedded JSON's opening quote terminated the HTML
+// attribute), so every feedback button threw a SyntaxError and the loop
+// never fired. Guards in tests/test_frontend_security.js keep inline
+// feedback handlers from returning.
+const feedbackPlaceRegistry = new Map();
+let feedbackPlaceTokenCounter = 0;
+function registerFeedbackPlace(place) {
+  const token = 'fbp_' + (++feedbackPlaceTokenCounter);
+  feedbackPlaceRegistry.set(token, {
+    types: (place && Array.isArray(place.types)) ? place.types.slice(0, 10) : [],
+    price_level: (place && place.price_level) || null,
+    location: (place && place.location) || null,
+  });
+  return token;
+}
+
+// Single delegated listener: covers all current and future feedback buttons.
+document.addEventListener('click', (e) => {
+  const target = e.target;
+  const btn = target && target.closest ? target.closest('.btn-thumb') : null;
+  if (!btn || !btn.dataset || !btn.dataset.placeId) return;
+  sendFeedback(
+    btn.dataset.placeId,
+    btn.dataset.placeName || '',
+    btn.dataset.feedbackType || 'like',
+    feedbackPlaceRegistry.get(btn.dataset.placeToken) || null
+  );
+});
 async function sendFeedback(placeId, placeName, feedbackType, place) {
   try {
     const res = await fetch(`${API_BASE}/api/feedback`, {
@@ -402,12 +592,27 @@ function sendPrompt(text) {
 }
 
 // Modal Handling
+let lastFocusedBeforeModal = null;
 btnUploadModal.onclick = () => {
+  // F-16: remember focus, mark the dialog, focus the first control, and
+  // restore focus on close (Escape or button) — previously the dialog was
+  // unreachable/unescapable by keyboard.
+  lastFocusedBeforeModal = document.activeElement;
   uploadModal.classList.remove('hidden');
   uploadStatus.classList.add('hidden');
   fileInput.value = '';
+  const closeBtn = uploadModal.querySelector('.btn-close');
+  if (closeBtn) closeBtn.focus();
 };
-function closeModal() { uploadModal.classList.add('hidden'); }
+function closeModal() {
+  uploadModal.classList.add('hidden');
+  if (lastFocusedBeforeModal && lastFocusedBeforeModal.focus) lastFocusedBeforeModal.focus();
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !uploadModal.classList.contains('hidden')) {
+    closeModal();
+  }
+});
 
 // Handle Drag & Drop on drop-zone
 const dropZone = document.getElementById('dropZone');
@@ -455,26 +660,62 @@ async function handleFileUpload(file) {
     uploadStatus.classList.add('hidden');
     if (res.ok) {
       const data = await res.json();
-      alert(`🎉 Successfully analyzed ${data.count} saved places with Gemini on Vertex AI!\n\nTaste Profile updated: ${data.profile.taste_profile.summary}`);
       closeModal();
       loadUserProfile();
+      // F-06: blocking alert() froze the whole page; the result is now a
+      // non-blocking toast plus a jump to the Profile tab so the freshly
+      // built profile is actually visible where it happened.
+      showToast(`✅ Analyzed ${data.count} saved place${data.count === 1 ? '' : 's'} — taste profile updated.`, 6000);
+      const profileTabBtn = document.querySelector('.tab-btn[data-tab="profile"]');
+      if (profileTabBtn) profileTabBtn.click();
     } else {
       const errData = await res.json().catch(() => ({}));
-      alert(`Upload failed (${res.status}): ${errData.detail || 'Invalid file format'}`);
+      showToast(`⚠️ ${friendlyUploadError(res.status, errData.detail)}`, 8000);
     }
   } catch (err) {
     uploadStatus.classList.add('hidden');
     console.error('Upload network error:', err);
-    alert('Upload failed: Network error connecting to backend.');
+    showToast('⚠️ Upload failed — network error. Check your connection and try again.', 8000);
   }
 }
 
-btnResetSession.onclick = () => {
-  if (confirm('Start a fresh discovery session?')) {
-    currentSessionId = 'sess_' + Math.random().toString(36).substring(2, 9);
-    localStorage.setItem('gpa_session_id', currentSessionId);
-    window.location.reload();
+// F-06 companion: translate backend/JSON internals into user-actionable copy.
+function friendlyUploadError(status, detail) {
+  const d = String(detail || '');
+  if (d.includes('No saved places found')) {
+    return 'No saved places found in that file. Export "Saved places" from Google Takeout, then upload the .zip or the Saved Places.json inside it.';
   }
+  if (d.includes('Expecting value') || d.includes('Failed to process takeout export')) {
+    return 'That file doesn\'t look like a Google Takeout export. Upload the Takeout .zip (or Saved Places.json / Want to go.csv from inside it).';
+  }
+  if (status === 413) {
+    return 'That file is too large. Try uploading the Saved Places.json from inside your Takeout archive instead of the full .zip.';
+  }
+  return `Upload failed (${status}). Please check the file and try again.`;
+}
+
+btnResetSession.onclick = () => {
+  // F-06: native confirm() blocks the page and is inconsistent across
+  // platforms; a lightweight in-page confirmation keeps the flow visible.
+  if (!btnResetSession.dataset.confirming) {
+    btnResetSession.dataset.confirming = '1';
+    btnResetSession.classList.add('confirming');
+    const label = btnResetSession.querySelector('span:last-child') || btnResetSession;
+    btnResetSession.dataset.originalLabel = label.textContent;
+    label.textContent = 'Sure? Click again';
+    showToast('Click Reset again to start a fresh session. This clears the conversation view (your notebook data for this session stays in history).', 6000);
+    setTimeout(() => {
+      delete btnResetSession.dataset.confirming;
+      btnResetSession.classList.remove('confirming');
+      if (btnResetSession.dataset.originalLabel && label) label.textContent = btnResetSession.dataset.originalLabel;
+    }, 6000);
+    return;
+  }
+  delete btnResetSession.dataset.confirming;
+  btnResetSession.classList.remove('confirming');
+  currentSessionId = 'sess_' + Math.random().toString(36).substring(2, 9);
+  localStorage.setItem('gpa_session_id', currentSessionId);
+  window.location.reload();
 };
 
 // Utilities
@@ -483,8 +724,14 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, m => map[m]);
 }
 
+// ─── Safe, minimal markdown → HTML for trusted-length agent text. ───
+// SECURITY (F-01): text is HTML-escaped FIRST, so any markup in model output
+// renders inert. Only the three markdown constructs the agent actually emits
+// are then translated: **bold**, *italic*, line breaks. Links/bullets are
+// intentionally left as plain text rather than parsed into live elements.
 function markedParse(text) {
-  return text
+  const escaped = escapeHtml(String(text ?? ''));
+  return escaped
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/\n\n/g, '</p><p>')
@@ -572,7 +819,7 @@ function buildKML(places) {
       p.intent_score != null ? `Intent: ${p.intent_score}/10` : "",
       p.taste_score != null ? `Taste: ${p.taste_score}/10` : "",
       p.rating != null ? `Google: ${p.rating}` : "",
-      p.price_level || "",
+      humanizePriceLevel(p.price_level), // F-09: no raw enums in KML
       p.address || "",
       p.maps_url || "",
     ].filter(Boolean).join("\n");
@@ -609,7 +856,8 @@ function buildCSV(places) {
       p.taste_score ?? "",
       p.scored_by || "llm",
       p.rating ?? "",
-      p.price_level || "",
+      // F-09: human-readable price in exports instead of raw enums.
+      humanizePriceLevel(p.price_level),
       p.address || "",
       p.maps_url || mapsHrefFor(p),
       p.lat ?? "",
@@ -751,11 +999,14 @@ if (btnDownloadKML) btnDownloadKML.addEventListener('click', downloadKML);
 if (btnDownloadCSV) btnDownloadCSV.addEventListener('click', downloadCSV);
 
 // Non-blocking toast (replaces blocking alert() for feedback/export notices)
-function showToast(message) {
+function showToast(message, durationMs = 4000) {
   let toastHost = document.getElementById('toastHost');
   if (!toastHost) {
     toastHost = document.createElement('div');
     toastHost.id = 'toastHost';
+    // F-16 companion: toasts are status changes — announce them politely.
+    toastHost.setAttribute('role', 'status');
+    toastHost.setAttribute('aria-live', 'polite');
     document.body.appendChild(toastHost);
   }
   const toast = document.createElement('div');
@@ -766,7 +1017,7 @@ function showToast(message) {
   setTimeout(() => {
     toast.classList.remove('visible');
     setTimeout(() => toast.remove(), 300);
-  }, 4000);
+  }, durationMs);
 }
 
 // ─── "Learned from your feedback" chips ─────────────────────────

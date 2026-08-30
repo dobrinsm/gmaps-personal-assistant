@@ -34,6 +34,10 @@ class TasteDB:
             "user_id": user_id,
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
+            # F-07: mark fabrication honestly — this profile is a code default,
+            # not something learned about the user. The UI shows an empty state
+            # until the user actually chats or imports their Takeout.
+            "is_default": True,
             "taste_profile": {
                 "summary": "Explorer seeking local, authentic experiences with distinct atmosphere and high culinary standards.",
                 "cuisines": ["Seafood", "Local / Regional", "Authentic Bistro", "Artisanal Bakery"],
