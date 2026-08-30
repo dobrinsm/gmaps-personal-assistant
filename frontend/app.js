@@ -481,8 +481,13 @@ function appendAgentResponse(data, opts = {}) {
     data.clarifying_questions.forEach(q => {
       const qDiv = document.createElement('div');
       qDiv.className = 'clarification-item';
+      // F-16: clarifying questions are interactive — make them keyboard
+      // operable (button role + focus + Enter/Space activation).
+      qDiv.setAttribute('role', 'button');
+      qDiv.setAttribute('tabindex', '0');
+      qDiv.setAttribute('aria-label', `Use this question in your reply: ${q}`);
       qDiv.innerHTML = `<strong>❓ ${escapeHtml(q)}</strong>`;
-      qDiv.onclick = () => {
+      const applyPrefill = () => {
         // F-14: don't clobber what the user is typing — append instead.
         const prefix = `Regarding "${q}": `;
         chatInput.value = chatInput.value.trim()
@@ -490,6 +495,13 @@ function appendAgentResponse(data, opts = {}) {
           : prefix;
         chatInput.focus();
         chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+      };
+      qDiv.onclick = applyPrefill;
+      qDiv.onkeydown = (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          applyPrefill();
+        }
       };
       clarificationItems.appendChild(qDiv);
     });
@@ -580,12 +592,27 @@ function sendPrompt(text) {
 }
 
 // Modal Handling
+let lastFocusedBeforeModal = null;
 btnUploadModal.onclick = () => {
+  // F-16: remember focus, mark the dialog, focus the first control, and
+  // restore focus on close (Escape or button) — previously the dialog was
+  // unreachable/unescapable by keyboard.
+  lastFocusedBeforeModal = document.activeElement;
   uploadModal.classList.remove('hidden');
   uploadStatus.classList.add('hidden');
   fileInput.value = '';
+  const closeBtn = uploadModal.querySelector('.btn-close');
+  if (closeBtn) closeBtn.focus();
 };
-function closeModal() { uploadModal.classList.add('hidden'); }
+function closeModal() {
+  uploadModal.classList.add('hidden');
+  if (lastFocusedBeforeModal && lastFocusedBeforeModal.focus) lastFocusedBeforeModal.focus();
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !uploadModal.classList.contains('hidden')) {
+    closeModal();
+  }
+});
 
 // Handle Drag & Drop on drop-zone
 const dropZone = document.getElementById('dropZone');

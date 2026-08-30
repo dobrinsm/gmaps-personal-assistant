@@ -527,7 +527,9 @@ body {
 
 .empty-hint {
   font-size: 12px;
-  color: var(--text-muted);
+  /* F-16: --text-muted (#6b7280) measured ~3.0:1 on card backgrounds; the
+     secondary tone clears 4.5:1 for this small italic text. */
+  color: var(--text-secondary);
   font-style: italic;
 }
 
@@ -626,6 +628,19 @@ body {
   font-size: 20px;
   color: var(--text-secondary);
   cursor: pointer;
+  /* F-16: visible focus + comfortable target for the modal close button. */
+  min-width: 44px;
+  min-height: 44px;
+}
+.btn-close:focus-visible,
+.chip-btn:focus-visible,
+.tab-btn:focus-visible,
+.btn:focus-visible,
+.btn-thumb:focus-visible,
+.clarification-item:focus-visible,
+.drop-zone:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
 }
 
 .drop-zone {
@@ -1031,5 +1046,36 @@ body {
   }
   .navbar .nav-actions .btn span:not(:first-child) {
     display: none;
+  }
+}
+
+/* ─── Accessibility helpers (F-16) ────────────────────────────────── */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.clarification-item {
+  cursor: pointer;
+}
+.clarification-item:hover {
+  border-color: var(--accent-blue);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

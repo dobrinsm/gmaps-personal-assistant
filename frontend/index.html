@@ -72,10 +72,11 @@
 
         <!-- Chat Input Form -->
         <form class="chat-input-area" id="chatForm">
-          <input 
-            type="text" 
-            id="chatInput" 
-            placeholder="Type your destination, mood, or reply to clarifying questions..." 
+          <label class="visually-hidden" for="chatInput">Message to the travel agent</label>
+          <input
+            type="text"
+            id="chatInput"
+            placeholder="Type your destination, mood, or reply to clarifying questions..."
             autocomplete="off"
           />
           <button type="submit" id="btnSend" class="btn btn-primary">
@@ -204,18 +205,19 @@
     </main>
 
     <!-- Upload Takeout Modal -->
-    <div class="modal hidden" id="uploadModal">
+    <div class="modal hidden" id="uploadModal" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
       <div class="modal-backdrop" onclick="closeModal()"></div>
       <div class="modal-card">
         <div class="modal-header">
-          <h3>📤 Import Google Maps Saved Places</h3>
-          <button class="btn-close" onclick="closeModal()">×</button>
+          <h3 id="uploadModalTitle">📤 Import Google Maps Saved Places</h3>
+          <button type="button" class="btn-close" onclick="closeModal()" aria-label="Close upload dialog">×</button>
         </div>
         <div class="modal-body">
           <p>Upload your <strong>Google Takeout <code>.zip</code></strong> file directly (or uncompressed <code>Saved Places.json</code> / <code>Want to go.csv</code>). Your saved places will be analyzed to build an adaptive Taste Profile. <a href="https://takeout.google.com/" target="_blank" rel="noopener" class="modal-help-link">How to get your Takeout file ↗</a></p>
           <p class="modal-steps">1. Open Google Takeout → 2. Select only <em>Maps (your places)</em> → 3. Export and upload the .zip here.</p>
           <div class="drop-zone" id="dropZone">
-            <input type="file" id="fileInput" accept=".zip,.json,.geojson,.csv" />
+            <label class="visually-hidden" for="fileInput">Upload Google Takeout file (.zip, .json, or .csv)</label>
+          <input type="file" id="fileInput" accept=".zip,.json,.geojson,.csv" />
             <div class="drop-text">
               <span class="drop-icon">📦</span>
               <p>Drag and drop your <strong>Takeout .zip</strong> or JSON/CSV here, or <strong>browse files</strong></p>
