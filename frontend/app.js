@@ -640,6 +640,14 @@ if (dropZone) {
       handleFileUpload(files[0]);
     }
   });
+
+  // Click anywhere on the drop zone (incl. the "browse files" copy) opens the
+  // native file chooser. The input itself is visually hidden inside the zone.
+  dropZone.addEventListener('click', (e) => {
+    e.preventDefault();
+    fileInput.click();
+  });
+  fileInput.addEventListener('click', (e) => e.stopPropagation());
 }
 
 fileInput.addEventListener('change', (e) => {

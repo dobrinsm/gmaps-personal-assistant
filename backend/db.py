@@ -59,7 +59,10 @@ class TasteDB:
     def update_taste_profile(self, user_id: str, taste_profile: Dict[str, Any], saved_places_count: Optional[int] = None) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "taste_profile": taste_profile,
-            "updated_at": datetime.utcnow().isoformat()
+            "updated_at": datetime.utcnow().isoformat(),
+            # F-07 companion: a real profile was generated — clear the default flag
+            # so the UI shows the learned profile instead of the empty-state copy.
+            "is_default": False
         }
         if saved_places_count is not None:
             data["saved_places_count"] = saved_places_count
