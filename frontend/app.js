@@ -193,13 +193,14 @@ function renderNotebook(nb) {
       const dualScore = (p.intent_score != null && p.taste_score != null)
         ? `I ${Math.round(p.intent_score)} · T ${Math.round(p.taste_score)} → ${Math.round((p.combined_score ?? 0) * 10) / 10}`
         : (p.taste_match_score != null ? `Match: ${p.taste_match_score}%` : '');
+      // F-01 hardening: shortlist names/reasons are external data — escape them.
       card.innerHTML = `
         <div class="place-header">
-          <div class="place-name">${p.name}</div>
-          <div class="place-score">★ ${p.rating || '4.5'}</div>
+          <div class="place-name">${escapeHtml(p.name)}</div>
+          <div class="place-score">★ ${escapeHtml(p.rating || '4.5')}</div>
         </div>
         ${dualScore ? `<div class="place-scores">${escapeHtml(dualScore)}${p.scored_by === 'heuristic' ? ' <span class="heuristic-tag">heuristic shortlist</span>' : ''}</div>` : ''}
-        <div class="place-reason">${p.match_reason || ''}</div>
+        <div class="place-reason">${escapeHtml(p.match_reason || '')}</div>
       `;
       nbShortlist.appendChild(card);
     });
@@ -294,6 +295,9 @@ function appendAgentResponse(data) {
       const scoreDisplay = (p.intent_score != null && p.taste_score != null)
         ? `I ${Math.round(p.intent_score)} · T ${Math.round(p.taste_score)} → ${Math.round((p.combined_score ?? 0) * 10) / 10}`
         : `Match: ${p.taste_match_score || 0}%`;
+      // F-02 fix: data-* attributes + delegated listener instead of inline JS.
+      // Place context is registered once per place and referenced by token.
+      const placeToken = registerFeedbackPlace(p);
       placesHtml += `
         <div class="place-card">
           <div class="place-header">
@@ -309,11 +313,11 @@ function appendAgentResponse(data) {
           <div class="place-reason">💡 ${escapeHtml(p.match_reason || '')}</div>
           <div class="place-actions">
             <div class="feedback-buttons">
-              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'like', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">👍 Love it</button>
-              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'too_touristy', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">🚩 Touristy</button>
-              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'wrong_vibe', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">🎭 Wrong Vibe</button>
+              <button type="button" class="btn-thumb" data-place-id="${escapeHtml(p.id)}" data-place-name="${escapeHtml(p.name)}" data-feedback-type="like" data-place-token="${placeToken}">👍 Love it</button>
+              <button type="button" class="btn-thumb" data-place-id="${escapeHtml(p.id)}" data-place-name="${escapeHtml(p.name)}" data-feedback-type="too_touristy" data-place-token="${placeToken}">🚩 Touristy</button>
+              <button type="button" class="btn-thumb" data-place-id="${escapeHtml(p.id)}" data-place-name="${escapeHtml(p.name)}" data-feedback-type="wrong_vibe" data-place-token="${placeToken}">🎭 Wrong Vibe</button>
             </div>
-            <a href="${p.maps_url}" target="_blank" class="maps-link">Open in Maps ↗</a>
+            <a href="${escapeHtml(p.maps_url || '')}" target="_blank" rel="noopener" class="maps-link">Open in Maps ↗</a>
           </div>
         </div>
       `;
@@ -364,6 +368,36 @@ function appendErrorMessage(msg) {
 }
 
 // Interactive Feedback Loop
+// F-02 fix: place context lives in a registry keyed by a token; buttons carry
+// data-* attributes. The previous inline-JS handler template produced
+// malformed HTML (the embedded JSON's opening quote terminated the HTML
+// attribute), so every feedback button threw a SyntaxError and the loop
+// never fired. Guards in tests/test_frontend_security.js keep inline
+// feedback handlers from returning.
+const feedbackPlaceRegistry = new Map();
+let feedbackPlaceTokenCounter = 0;
+function registerFeedbackPlace(place) {
+  const token = 'fbp_' + (++feedbackPlaceTokenCounter);
+  feedbackPlaceRegistry.set(token, {
+    types: (place && Array.isArray(place.types)) ? place.types.slice(0, 10) : [],
+    price_level: (place && place.price_level) || null,
+    location: (place && place.location) || null,
+  });
+  return token;
+}
+
+// Single delegated listener: covers all current and future feedback buttons.
+document.addEventListener('click', (e) => {
+  const target = e.target;
+  const btn = target && target.closest ? target.closest('.btn-thumb') : null;
+  if (!btn || !btn.dataset || !btn.dataset.placeId) return;
+  sendFeedback(
+    btn.dataset.placeId,
+    btn.dataset.placeName || '',
+    btn.dataset.feedbackType || 'like',
+    feedbackPlaceRegistry.get(btn.dataset.placeToken) || null
+  );
+});
 async function sendFeedback(placeId, placeName, feedbackType, place) {
   try {
     const res = await fetch(`${API_BASE}/api/feedback`, {
@@ -483,8 +517,14 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, m => map[m]);
 }
 
+// ─── Safe, minimal markdown → HTML for trusted-length agent text. ───
+// SECURITY (F-01): text is HTML-escaped FIRST, so any markup in model output
+// renders inert. Only the three markdown constructs the agent actually emits
+// are then translated: **bold**, *italic*, line breaks. Links/bullets are
+// intentionally left as plain text rather than parsed into live elements.
 function markedParse(text) {
-  return text
+  const escaped = escapeHtml(String(text ?? ''));
+  return escaped
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
     .replace(/\n\n/g, '</p><p>')
