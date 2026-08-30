@@ -914,6 +914,28 @@ body {
   padding-left: 10px;
 }
 
+/* Empty learned-chips section renders nothing at all (F-21) */
+#nbLearned.empty {
+  display: none;
+}
+
+/* Price line on place cards (F-09) */
+.place-price {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+/* Takeout modal helper copy (F-18) */
+.modal-steps {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.modal-help-link {
+  color: var(--accent-blue);
+  text-decoration: underline;
+}
+
 /* ════════════════════════════════════════════════════════════════════
    Responsive layout (F-05) — the workspace previously had no breakpoints
    at all, squeezing the Agent Notebook into a ~28px sliver on phones.

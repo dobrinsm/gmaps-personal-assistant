@@ -53,6 +53,7 @@ const mapEmptyState = document.getElementById('mapEmptyState');
 const itineraryStops = document.getElementById('itineraryStops');
 
 const MAPS_DIR_MAX_STOPS = 10; // Google Maps directions stop limit
+const CHAT_INPUT_MAX = 5000; // F-20: guard against runaway prompts/costs
 
 // Tab Switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -218,6 +219,40 @@ function renderTagList(container, tags) {
   });
 }
 
+// ─── Display helpers (F-09/F-17) ────────────────────────────────────
+// Humanize raw Google price-level enums; keep exports and cards readable.
+function humanizePriceLevel(raw) {
+  if (!raw) return '';
+  const key = String(raw).toUpperCase().replace(/^PRICE_LEVEL_/, '');
+  const map = {
+    FREE: 'Free',
+    INEXPENSIVE: 'Inexpensive ($)',
+    MODERATE: 'Moderate ($$)',
+    EXPENSIVE: 'Expensive ($$$)',
+    VERY_EXPENSIVE: 'Very expensive ($$$$)',
+  };
+  return map[key] || String(raw).toLowerCase().replace(/_/g, ' ');
+}
+
+// Internal notebook keys → human labels (F-17). Unknown keys pass through.
+function humanizePrefKey(key) {
+  const map = {
+    fancy_level: 'Fancy level',
+    occasion_vibe: 'Occasion & vibe',
+    vibe: 'Vibe',
+    occasion: 'Occasion',
+    budget: 'Budget',
+    dietary: 'Dietary',
+    pace: 'Pace',
+    group_type: 'Group type',
+    transport: 'Transport',
+    cuisine: 'Cuisine',
+    neighborhood: 'Neighborhood',
+  };
+  const k = String(key);
+  return map[k] || k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 function renderNotebook(nb) {
   if (!nb) return;
   currentNotebook = nb; // keep the latest notebook for map/export layer
@@ -233,13 +268,17 @@ function renderNotebook(nb) {
     prefKeys.forEach(k => {
       const span = document.createElement('span');
       span.className = 'tag-pill';
-      span.textContent = `${k}: ${prefs[k]}`;
+      // F-17: show human labels for internal notebook keys.
+      span.textContent = `${humanizePrefKey(k)}: ${prefs[k]}`;
       nbPreferences.appendChild(span);
     });
   }
 
   // "Learned from your feedback" chips (memory loop made visible)
   renderLearnedChips();
+  // F-21: don't render an empty bordered section before feedback exists.
+  const learnedSection = document.getElementById('nbLearned');
+  if (learnedSection && !learnedSection.innerHTML.trim()) learnedSection.classList.add('empty');
 
   // Notes
   const notes = nb.itinerary_notes || [];
@@ -291,8 +330,13 @@ let chatRequestInFlight = false; // F-04a: serialize chat submissions
 chatForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (chatRequestInFlight) return; // drop double-submits while a turn is pending
-  const text = chatInput.value.trim();
+  let text = chatInput.value.trim();
   if (!text) return;
+  // F-20: soft input cap — overlong prompts risk timeouts and wasted spend.
+  if (text.length > CHAT_INPUT_MAX) {
+    text = text.slice(0, CHAT_INPUT_MAX);
+    showToast(`Message trimmed to the first ${CHAT_INPUT_MAX} characters.`, 5000);
+  }
 
   chatRequestInFlight = true;
   btnSend.disabled = true;
@@ -404,6 +448,7 @@ function appendAgentResponse(data, opts = {}) {
             <div class="place-score">${escapeHtml(scoreDisplay)}${isHeuristic ? '<div class="heuristic-tag">heuristic shortlist</div>' : ''}</div>
           </div>
           <div class="place-reason">💡 ${escapeHtml(p.match_reason || '')}</div>
+          ${p.price_level ? `<div class="place-price">💵 ${escapeHtml(humanizePriceLevel(p.price_level))}</div>` : ''}
           <div class="place-actions">
             <div class="feedback-buttons">
               <button type="button" class="btn-thumb" data-place-id="${escapeHtml(p.id)}" data-place-name="${escapeHtml(p.name)}" data-feedback-type="like" data-place-token="${placeToken}">👍 Love it</button>
@@ -438,8 +483,13 @@ function appendAgentResponse(data, opts = {}) {
       qDiv.className = 'clarification-item';
       qDiv.innerHTML = `<strong>❓ ${escapeHtml(q)}</strong>`;
       qDiv.onclick = () => {
-        chatInput.value = `Regarding "${q}": `;
+        // F-14: don't clobber what the user is typing — append instead.
+        const prefix = `Regarding "${q}": `;
+        chatInput.value = chatInput.value.trim()
+          ? `${chatInput.value.trim()} ${prefix}`
+          : prefix;
         chatInput.focus();
+        chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
       };
       clarificationItems.appendChild(qDiv);
     });
@@ -742,7 +792,7 @@ function buildKML(places) {
       p.intent_score != null ? `Intent: ${p.intent_score}/10` : "",
       p.taste_score != null ? `Taste: ${p.taste_score}/10` : "",
       p.rating != null ? `Google: ${p.rating}` : "",
-      p.price_level || "",
+      humanizePriceLevel(p.price_level), // F-09: no raw enums in KML
       p.address || "",
       p.maps_url || "",
     ].filter(Boolean).join("\n");
@@ -779,7 +829,8 @@ function buildCSV(places) {
       p.taste_score ?? "",
       p.scored_by || "llm",
       p.rating ?? "",
-      p.price_level || "",
+      // F-09: human-readable price in exports instead of raw enums.
+      humanizePriceLevel(p.price_level),
       p.address || "",
       p.maps_url || mapsHrefFor(p),
       p.lat ?? "",
