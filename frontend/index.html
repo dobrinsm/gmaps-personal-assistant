@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GMaps Personal Assistant — Collaborative Travel & Taste Agent</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Top Navigation Bar -->
+    <header class="navbar">
+      <div class="brand">
+        <div class="brand-badge">⚡ Google GenAI × Cloud Run</div>
+        <div class="brand-title">
+          <span class="brand-icon">🗺️</span>
+          <h1>GMaps Assistant <span class="badge-partner">Collaborative Partner</span></h1>
+        </div>
+      </div>
+      <div class="nav-actions">
+        <button id="btnUploadModal" class="btn btn-secondary">
+          <span>📤</span> Import Google Takeout
+        </button>
+        <button id="btnResetSession" class="btn btn-ghost" title="Reset Session">
+          <span>🔄</span> Reset
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workspace Split -->
+    <main class="workspace">
+      <!-- Left: Agent Conversation & Discovery Feed -->
+      <section class="pane chat-pane">
+        <div class="pane-header">
+          <h2>💬 Collaborative Discovery Stream</h2>
+          <span class="status-indicator live">● Gemini 3.5 Flash Active</span>
+        </div>
+
+        <div class="chat-container" id="chatContainer">
+          <!-- Initial Welcome Message from Agent -->
+          <div class="message-card agent">
+            <div class="avatar">🤖</div>
+            <div class="content">
+              <div class="sender-name">Trip Partner <span class="time">Just now</span></div>
+              <div class="text">
+                <p>Hello! I am your <strong>Collaborative Travel & Taste Agent</strong>. I help you discover authentic local spots tailored precisely to your unique taste profile.</p>
+                <p>I'll lead the way, ask clarifying questions to nail down the exact vibe, and curate our findings in the <strong>Agent Notebook</strong> on the right.</p>
+                <p>Where are you thinking of exploring next?</p>
+              </div>
+              <div class="quick-prompts">
+                <button class="chip-btn" onclick="sendPrompt('Find fresh seafood in Catania, Sicily')">🌊 Fresh seafood in Catania</button>
+                <button class="chip-btn" onclick="sendPrompt('Artisanal bakery and specialty coffee in Berlin')">☕ Specialty coffee in Berlin</button>
+                <button class="chip-btn" onclick="sendPrompt('Cozy historic wine bar in Florence')">🍷 Historic wine bar in Florence</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clarifying Questions Dock -->
+        <div class="clarification-bar hidden" id="clarificationBar">
+          <div class="clarification-header">
+            <span>🤔 Agent Clarifying Question:</span>
+          </div>
+          <div class="clarification-items" id="clarificationItems"></div>
+        </div>
+
+        <!-- Chat Input Form -->
+        <form class="chat-input-area" id="chatForm">
+          <input 
+            type="text" 
+            id="chatInput" 
+            placeholder="Type your destination, mood, or reply to clarifying questions..." 
+            autocomplete="off"
+          />
+          <button type="submit" id="btnSend" class="btn btn-primary">
+            <span>Send</span> ➔
+          </button>
+        </form>
+      </section>
+
+      <!-- Right: Agent Notebook & Live Taste Profile -->
+      <aside class="pane notebook-pane">
+        <!-- Tab Switcher -->
+        <div class="tab-header">
+          <button class="tab-btn active" data-tab="notebook">📓 Agent Notebook</button>
+          <button class="tab-btn" data-tab="profile">🎯 Live Taste Profile</button>
+          <button class="tab-btn" data-tab="map">🗺️ Map & Itinerary</button>
+        </div>
+
+        <!-- Tab 1: Agent Notebook (Itinerary & Shortlist) -->
+        <div class="tab-content active" id="tabNotebook">
+          <div class="notebook-section">
+            <div class="section-title">
+              <span>📍 Destination</span>
+              <span class="badge" id="nbDestination">Not set</span>
+            </div>
+          </div>
+
+          <div class="notebook-section">
+            <div class="section-title">
+              <span>🎯 Clarified Preferences</span>
+            </div>
+            <div class="tags-container" id="nbPreferences">
+              <span class="empty-hint">Agent will record your preferences here as we converse.</span>
+            </div>
+          </div>
+
+          <div class="notebook-section" id="nbLearned"></div>
+
+          <div class="notebook-section">
+            <div class="section-title">
+              <span>📝 Itinerary & Discovery Notes</span>
+            </div>
+            <ul class="notes-list" id="nbNotes">
+              <li class="empty-hint">No notes logged yet.</li>
+            </ul>
+          </div>
+
+          <div class="notebook-section">
+            <div class="section-title">
+              <span>⭐ Curated Shortlist</span>
+              <span class="badge-count" id="nbShortlistCount">0</span>
+            </div>
+            <div class="shortlist-container" id="nbShortlist">
+              <div class="empty-hint">Saved recommendations appear here.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Live Taste Profile & Adapting Vector -->
+        <div class="tab-content" id="tabProfile">
+          <div class="profile-card">
+            <div class="profile-summary" id="profileSummary">
+              Loading your taste profile...
+            </div>
+
+            <div class="vector-weights">
+              <h4>Continuous Preference Weights (Learned)</h4>
+              <div class="weight-bar">
+                <div class="label">Authenticity & Local Feel</div>
+                <div class="progress"><div class="fill" id="weightAuth" style="width: 85%;"></div></div>
+                <span class="val" id="valAuth">0.85</span>
+              </div>
+              <div class="weight-bar">
+                <div class="label">Culinary Quality & Craft</div>
+                <div class="progress"><div class="fill" id="weightCulinary" style="width: 90%;"></div></div>
+                <span class="val" id="valCulinary">0.90</span>
+              </div>
+              <div class="weight-bar">
+                <div class="label">Scenic & Historic Ambiance</div>
+                <div class="progress"><div class="fill" id="weightAmbiance" style="width: 80%;"></div></div>
+                <span class="val" id="valAmbiance">0.80</span>
+              </div>
+              <div class="weight-bar">
+                <div class="label">Value for Money</div>
+                <div class="progress"><div class="fill" id="weightValue" style="width: 75%;"></div></div>
+                <span class="val" id="valValue">0.75</span>
+              </div>
+            </div>
+
+            <div class="tag-group">
+              <h4>Preferred Vibes</h4>
+              <div class="tags-container" id="profileVibes"></div>
+            </div>
+
+            <div class="tag-group">
+              <h4>Preferred Cuisines</h4>
+              <div class="tags-container" id="profileCuisines"></div>
+            </div>
+
+            <div class="tag-group">
+              <h4>Avoid Filters (Tourist Traps)</h4>
+              <div class="tags-container avoids" id="profileAvoids"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Itinerary Map & Export  -->
+        <div class="tab-content" id="tabMap">
+          <div class="itinerary-export-bar">
+            <span class="itinerary-hint" id="itineraryHint">Shortlist stops appear on the map in notebook order.</span>
+            <div class="export-buttons">
+              <button id="btnOpenInMaps" class="btn btn-secondary" disabled title="Opens directions for the first 10 stops">🗺️ Open in Google Maps</button>
+              <button id="btnDownloadKML" class="btn btn-secondary" disabled title="Full set — import into My Maps">📍 KML</button>
+              <button id="btnDownloadCSV" class="btn btn-secondary" disabled title="Spreadsheet with dual scores">📊 CSV</button>
+            </div>
+          </div>
+          <div class="itinerary-map-wrap">
+            <div id="itineraryMap"></div>
+            <div class="map-empty hidden" id="mapEmptyState">
+              <p>🗺️ No mapped stops yet.</p>
+              <p class="empty-hint">Get recommendations in chat — shortlisted places with coordinates appear here.<br>Places without coordinates are listed in the notebook but can't be pinned.</p>
+            </div>
+          </div>
+          <div class="itinerary-stops" id="itineraryStops"></div>
+        </div>
+      </aside>
+    </main>
+
+    <!-- Upload Takeout Modal -->
+    <div class="modal hidden" id="uploadModal">
+      <div class="modal-backdrop" onclick="closeModal()"></div>
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>📤 Import Google Maps Saved Places</h3>
+          <button class="btn-close" onclick="closeModal()">×</button>
+        </div>
+        <div class="modal-body">
+          <p>Upload your <strong>Google Takeout <code>.zip</code></strong> file directly (or uncompressed <code>Saved Places.json</code> / <code>Want to go.csv</code>). Gemini will analyze your places, cluster your preferences, and build an adaptive Taste Profile.</p>
+          <div class="drop-zone" id="dropZone">
+            <input type="file" id="fileInput" accept=".zip,.json,.geojson,.csv" />
+            <div class="drop-text">
+              <span class="drop-icon">📦</span>
+              <p>Drag and drop your <strong>Takeout .zip</strong> or JSON/CSV here, or <strong>browse files</strong></p>
+            </div>
+          </div>
+          <div class="upload-status hidden" id="uploadStatus">
+            <div class="spinner"></div>
+            <span>Analyzing places with Gemini 3.5 on Vertex AI...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+          integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Ruff configuration — lint rules for the backend + tests.
+# E501 (line length) is disabled: the codebase carries long LLM prompt
+# strings, Places field masks, and URLs where manual wrapping would
+# hurt readability. All other pycodestyle/pyflakes errors are enforced.
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[lint.per-file-ignores]
+# tests build large literal fixtures
+"tests/*" = ["E712"]

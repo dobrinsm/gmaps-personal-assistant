@@ -1,0 +1,799 @@
+// GMaps Personal Assistant - Collaborative Partner Agent Frontend
+const API_BASE = window.location.origin.includes('localhost') || window.location.origin.includes('127.0.0.1') 
+  ? 'http://127.0.0.1:8000' 
+  : window.location.origin;
+
+let currentUserId = localStorage.getItem('gpa_user_id') || 'user_' + Math.random().toString(36).substring(2, 9);
+let currentSessionId = localStorage.getItem('gpa_session_id') || 'sess_' + Math.random().toString(36).substring(2, 9);
+
+localStorage.setItem('gpa_user_id', currentUserId);
+localStorage.setItem('gpa_session_id', currentSessionId);
+
+// DOM Elements
+const chatContainer = document.getElementById('chatContainer');
+const chatForm = document.getElementById('chatForm');
+const chatInput = document.getElementById('chatInput');
+const clarificationBar = document.getElementById('clarificationBar');
+const clarificationItems = document.getElementById('clarificationItems');
+
+// Notebook Elements
+const nbDestination = document.getElementById('nbDestination');
+const nbPreferences = document.getElementById('nbPreferences');
+const nbNotes = document.getElementById('nbNotes');
+const nbShortlist = document.getElementById('nbShortlist');
+const nbShortlistCount = document.getElementById('nbShortlistCount');
+
+// Profile Elements
+const profileSummary = document.getElementById('profileSummary');
+const profileVibes = document.getElementById('profileVibes');
+const profileCuisines = document.getElementById('profileCuisines');
+const profileAvoids = document.getElementById('profileAvoids');
+const weightAuth = document.getElementById('weightAuth');
+const valAuth = document.getElementById('valAuth');
+const weightCulinary = document.getElementById('weightCulinary');
+const valCulinary = document.getElementById('valCulinary');
+const weightAmbiance = document.getElementById('weightAmbiance');
+const valAmbiance = document.getElementById('valAmbiance');
+const weightValue = document.getElementById('weightValue');
+const valValue = document.getElementById('valValue');
+
+// Modal Elements
+const uploadModal = document.getElementById('uploadModal');
+const btnUploadModal = document.getElementById('btnUploadModal');
+const fileInput = document.getElementById('fileInput');
+const uploadStatus = document.getElementById('uploadStatus');
+const btnResetSession = document.getElementById('btnResetSession');
+
+// Itinerary Map & Export Elements 
+const btnOpenInMaps = document.getElementById('btnOpenInMaps');
+const btnDownloadKML = document.getElementById('btnDownloadKML');
+const btnDownloadCSV = document.getElementById('btnDownloadCSV');
+const itineraryHint = document.getElementById('itineraryHint');
+const mapEmptyState = document.getElementById('mapEmptyState');
+const itineraryStops = document.getElementById('itineraryStops');
+
+const MAPS_DIR_MAX_STOPS = 10; // Google Maps directions stop limit
+
+// Tab Switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    const tabName = btn.getAttribute('data-tab');
+    const tabId = tabName === 'notebook' ? 'tabNotebook' : tabName === 'profile' ? 'tabProfile' : 'tabMap';
+    document.getElementById(tabId).classList.add('active');
+    if (tabName === 'map') {
+      // Leaflet needs a re-layout when its container becomes visible
+      renderItineraryMap();
+      if (itineraryMapInstance) {
+        setTimeout(() => itineraryMapInstance.invalidateSize(), 100);
+      }
+    }
+  });
+});
+
+// Load Initial Data
+window.addEventListener('DOMContentLoaded', () => {
+  loadUserProfile();
+  loadSessionData();
+});
+
+async function loadUserProfile() {
+  try {
+    const res = await fetch(`${API_BASE}/api/profile/${currentUserId}`);
+    if (res.ok) {
+      const data = await res.json();
+      renderUserProfile(data.taste_profile);
+    }
+  } catch (err) {
+    console.error('Failed to load user profile:', err);
+  }
+}
+
+async function loadSessionData() {
+  try {
+    const res = await fetch(`${API_BASE}/api/session/${currentSessionId}?user_id=${currentUserId}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.notebook) {
+        renderNotebook(data.notebook);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to load session:', err);
+  }
+}
+
+function renderUserProfile(tp) {
+  if (!tp) return;
+  profileSummary.textContent = tp.summary || 'Custom Taste Profile active.';
+  
+  // Weights
+  const w = tp.weights || {};
+  const auth = w.authenticity || 0.85;
+  const cul = w.culinary_quality || 0.90;
+  const amb = w.scenic_ambiance || 0.80;
+  const val = w.value_for_money || 0.75;
+
+  weightAuth.style.width = `${auth * 100}%`;
+  valAuth.textContent = auth.toFixed(2);
+
+  weightCulinary.style.width = `${cul * 100}%`;
+  valCulinary.textContent = cul.toFixed(2);
+
+  weightAmbiance.style.width = `${amb * 100}%`;
+  valAmbiance.textContent = amb.toFixed(2);
+
+  weightValue.style.width = `${val * 100}%`;
+  valValue.textContent = val.toFixed(2);
+
+  // Tags
+  renderTagList(profileVibes, tp.vibes || []);
+  renderTagList(profileCuisines, tp.cuisines || []);
+  renderTagList(profileAvoids, tp.avoid || []);
+}
+
+function renderTagList(container, tags) {
+  container.innerHTML = '';
+  tags.forEach(t => {
+    const span = document.createElement('span');
+    span.className = 'tag-pill';
+    span.textContent = t;
+    container.appendChild(span);
+  });
+}
+
+function renderNotebook(nb) {
+  if (!nb) return;
+  currentNotebook = nb; // keep the latest notebook for map/export layer
+  nbDestination.textContent = nb.destination || 'Not set';
+  
+  // Preferences
+  const prefs = nb.clarified_preferences || {};
+  nbPreferences.innerHTML = '';
+  const prefKeys = Object.keys(prefs);
+  if (prefKeys.length === 0) {
+    nbPreferences.innerHTML = '<span class="empty-hint">Agent will record your preferences here as we converse.</span>';
+  } else {
+    prefKeys.forEach(k => {
+      const span = document.createElement('span');
+      span.className = 'tag-pill';
+      span.textContent = `${k}: ${prefs[k]}`;
+      nbPreferences.appendChild(span);
+    });
+  }
+
+  // "Learned from your feedback" chips (memory loop made visible)
+  renderLearnedChips();
+
+  // Notes
+  const notes = nb.itinerary_notes || [];
+  nbNotes.innerHTML = '';
+  if (notes.length === 0) {
+    nbNotes.innerHTML = '<li class="empty-hint">No notes logged yet.</li>';
+  } else {
+    notes.forEach(n => {
+      const li = document.createElement('li');
+      li.textContent = n;
+      nbNotes.appendChild(li);
+    });
+  }
+
+  // Shortlist
+  const shortlist = nb.shortlist || [];
+  nbShortlistCount.textContent = shortlist.length;
+  nbShortlist.innerHTML = '';
+  if (shortlist.length === 0) {
+    nbShortlist.innerHTML = '<div class="empty-hint">Saved recommendations appear here.</div>';
+  } else {
+    shortlist.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'place-card';
+      const dualScore = (p.intent_score != null && p.taste_score != null)
+        ? `I ${Math.round(p.intent_score)} · T ${Math.round(p.taste_score)} → ${Math.round((p.combined_score ?? 0) * 10) / 10}`
+        : (p.taste_match_score != null ? `Match: ${p.taste_match_score}%` : '');
+      card.innerHTML = `
+        <div class="place-header">
+          <div class="place-name">${p.name}</div>
+          <div class="place-score">★ ${p.rating || '4.5'}</div>
+        </div>
+        ${dualScore ? `<div class="place-scores">${escapeHtml(dualScore)}${p.scored_by === 'heuristic' ? ' <span class="heuristic-tag">heuristic shortlist</span>' : ''}</div>` : ''}
+        <div class="place-reason">${p.match_reason || ''}</div>
+      `;
+      nbShortlist.appendChild(card);
+    });
+  }
+
+  // refresh itinerary map layer (no-op until the map tab is opened)
+  if (typeof renderItineraryMap === 'function') {
+    renderItineraryMap();
+  }
+}
+
+// Chat Submission
+chatForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text) return;
+
+  chatInput.value = '';
+  appendUserMessage(text);
+  clarificationBar.classList.add('hidden');
+
+  // Loading indicator
+  const loadingCard = appendLoadingMessage();
+
+  try {
+    const res = await fetch(`${API_BASE}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: currentUserId,
+        session_id: currentSessionId,
+        message: text
+      })
+    });
+
+    loadingCard.remove();
+
+    if (res.ok) {
+      const data = await res.json();
+      appendAgentResponse(data);
+      if (data.notebook) {
+        renderNotebook(data.notebook);
+      }
+    } else {
+      appendErrorMessage('Failed to get response from Collaborative Agent.');
+    }
+  } catch (err) {
+    loadingCard.remove();
+    console.error('Chat error:', err);
+    appendErrorMessage('Connection error. Ensure the backend server is running.');
+  }
+});
+
+function appendUserMessage(text) {
+  const card = document.createElement('div');
+  card.className = 'message-card user';
+  card.innerHTML = `
+    <div class="avatar">👤</div>
+    <div class="content">
+      <div class="sender-name">You</div>
+      <div class="text"><p>${escapeHtml(text)}</p></div>
+    </div>
+  `;
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function appendLoadingMessage() {
+  const card = document.createElement('div');
+  card.className = 'message-card agent';
+  card.innerHTML = `
+    <div class="avatar">🤖</div>
+    <div class="content">
+      <div class="sender-name">Trip Partner <span>Thinking...</span></div>
+      <div class="text"><p>Synthesizing taste profile & querying Google Places...</p></div>
+    </div>
+  `;
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+  return card;
+}
+
+function appendAgentResponse(data) {
+  const card = document.createElement('div');
+  card.className = 'message-card agent';
+
+  let placesHtml = '';
+  if (data.places && data.places.length > 0) {
+    placesHtml = '<div class="places-grid">';
+    data.places.forEach(p => {
+      const isHeuristic = p.scored_by === 'heuristic';
+      const scoreDisplay = (p.intent_score != null && p.taste_score != null)
+        ? `I ${Math.round(p.intent_score)} · T ${Math.round(p.taste_score)} → ${Math.round((p.combined_score ?? 0) * 10) / 10}`
+        : `Match: ${p.taste_match_score || 0}%`;
+      placesHtml += `
+        <div class="place-card">
+          <div class="place-header">
+            <div>
+              <div class="place-name">${escapeHtml(p.name)}</div>
+              <div class="place-meta">
+                <span>⭐ ${p.rating || 'N/A'} (${p.review_count || 0} reviews)</span>
+                <span>• ${escapeHtml(p.address || '')}</span>
+              </div>
+            </div>
+            <div class="place-score">${escapeHtml(scoreDisplay)}${isHeuristic ? '<div class="heuristic-tag">heuristic shortlist</div>' : ''}</div>
+          </div>
+          <div class="place-reason">💡 ${escapeHtml(p.match_reason || '')}</div>
+          <div class="place-actions">
+            <div class="feedback-buttons">
+              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'like', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">👍 Love it</button>
+              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'too_touristy', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">🚩 Touristy</button>
+              <button class="btn-thumb" onclick="sendFeedback('${p.id}', '${escapeHtml(p.name)}', 'wrong_vibe', ${JSON.stringify(JSON.stringify({types: p.types || [], price_level: p.price_level || null, location: p.location || null}))})">🎭 Wrong Vibe</button>
+            </div>
+            <a href="${p.maps_url}" target="_blank" class="maps-link">Open in Maps ↗</a>
+          </div>
+        </div>
+      `;
+    });
+    placesHtml += '</div>';
+  }
+
+  card.innerHTML = `
+    <div class="avatar">🤖</div>
+    <div class="content">
+      <div class="sender-name">Trip Partner</div>
+      <div class="text">${markedParse(data.message || '')}</div>
+      ${placesHtml}
+    </div>
+  `;
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+
+  // Handle Clarifying Questions
+  if (data.clarifying_questions && data.clarifying_questions.length > 0) {
+    clarificationItems.innerHTML = '';
+    data.clarifying_questions.forEach(q => {
+      const qDiv = document.createElement('div');
+      qDiv.className = 'clarification-item';
+      qDiv.innerHTML = `<strong>❓ ${escapeHtml(q)}</strong>`;
+      qDiv.onclick = () => {
+        chatInput.value = `Regarding "${q}": `;
+        chatInput.focus();
+      };
+      clarificationItems.appendChild(qDiv);
+    });
+    clarificationBar.classList.remove('hidden');
+  }
+}
+
+function appendErrorMessage(msg) {
+  const card = document.createElement('div');
+  card.className = 'message-card agent';
+  card.innerHTML = `
+    <div class="avatar">⚠️</div>
+    <div class="content" style="border-color: #ef4444;">
+      <div class="sender-name">System</div>
+      <div class="text"><p style="color: #fca5a5;">${escapeHtml(msg)}</p></div>
+    </div>
+  `;
+  chatContainer.appendChild(card);
+  chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+// Interactive Feedback Loop
+async function sendFeedback(placeId, placeName, feedbackType, place) {
+  try {
+    const res = await fetch(`${API_BASE}/api/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: currentUserId,
+        session_id: currentSessionId,
+        place_id: placeId,
+        place_name: placeName,
+        feedback_type: feedbackType,
+        // place context lets the memory loop generalize the signal
+        place_types: (place && Array.isArray(place.types)) ? place.types.slice(0, 10) : null,
+        price_level: (place && place.price_level) ? place.price_level : null,
+        location: (place && place.location) ? place.location : null
+      })
+    });
+    if (res.ok) {
+      showToast(`Feedback recorded: "${feedbackType}". Taste profile adapted — future picks will reflect it.`);
+      loadUserProfile();
+      loadSessionData();
+      // show the learned-preferences chips immediately
+      renderLearnedChips();
+    } else {
+      showToast('⚠️ Feedback failed to save. Please try again.');
+    }
+  } catch (err) {
+    console.error('Feedback failed:', err);
+    showToast('⚠️ Feedback failed: network error.');
+  }
+}
+
+function sendPrompt(text) {
+  chatInput.value = text;
+  chatForm.dispatchEvent(new Event('submit'));
+}
+
+// Modal Handling
+btnUploadModal.onclick = () => {
+  uploadModal.classList.remove('hidden');
+  uploadStatus.classList.add('hidden');
+  fileInput.value = '';
+};
+function closeModal() { uploadModal.classList.add('hidden'); }
+
+// Handle Drag & Drop on drop-zone
+const dropZone = document.getElementById('dropZone');
+if (dropZone) {
+  ['dragenter', 'dragover'].forEach(eventName => {
+    dropZone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.style.borderColor = 'var(--accent-blue)';
+    }, false);
+  });
+
+  ['dragleave', 'drop'].forEach(eventName => {
+    dropZone.addEventListener(eventName, (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dropZone.style.borderColor = 'var(--border-color)';
+    }, false);
+  });
+
+  dropZone.addEventListener('drop', (e) => {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+    if (files && files.length > 0) {
+      handleFileUpload(files[0]);
+    }
+  });
+}
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) handleFileUpload(file);
+});
+
+async function handleFileUpload(file) {
+  uploadStatus.classList.remove('hidden');
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch(`${API_BASE}/api/upload-takeout?user_id=${currentUserId}`, {
+      method: 'POST',
+      body: formData
+    });
+    uploadStatus.classList.add('hidden');
+    if (res.ok) {
+      const data = await res.json();
+      alert(`🎉 Successfully analyzed ${data.count} saved places with Gemini on Vertex AI!\n\nTaste Profile updated: ${data.profile.taste_profile.summary}`);
+      closeModal();
+      loadUserProfile();
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      alert(`Upload failed (${res.status}): ${errData.detail || 'Invalid file format'}`);
+    }
+  } catch (err) {
+    uploadStatus.classList.add('hidden');
+    console.error('Upload network error:', err);
+    alert('Upload failed: Network error connecting to backend.');
+  }
+}
+
+btnResetSession.onclick = () => {
+  if (confirm('Start a fresh discovery session?')) {
+    currentSessionId = 'sess_' + Math.random().toString(36).substring(2, 9);
+    localStorage.setItem('gpa_session_id', currentSessionId);
+    window.location.reload();
+  }
+};
+
+// Utilities
+function escapeHtml(text) {
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return String(text).replace(/[&<>"']/g, m => map[m]);
+}
+
+function markedParse(text) {
+  return text
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+}
+
+// ════════════════════════════════════════════════════════════════════
+// ══ Itinerary: Map + Export ══
+// Itinerary map + export layer (client-side generation).
+// Shortlist order = itinerary order; all generation is client-side.
+// ════════════════════════════════════════════════════════════════════
+
+let currentNotebook = null;
+let itineraryMapInstance = null; // Leaflet map instance
+const itineraryMarkers = [];    // { key, marker, place }
+
+function scoreColor(score) {
+  const s = Number(score) || 0;
+  if (s >= 8) return "#22c55e";
+  if (s >= 6.5) return "#84cc16";
+  if (s >= 5) return "#f97316";
+  if (s >= 3) return "#eab308";
+  return "#71717a";
+}
+
+function placeKey(p) {
+  if (p.lat != null && p.lng != null) return `geo:${p.lat},${p.lng}`;
+  return `name:${(p.name || "").toLowerCase()}`;
+}
+
+function shortlistPlaces(nb) {
+  return (nb && Array.isArray(nb.shortlist)) ? nb.shortlist : [];
+}
+
+function hasCoords(p) {
+  return p != null && p.lat != null && p.lng != null && !Number.isNaN(Number(p.lat)) && !Number.isNaN(Number(p.lng));
+}
+
+function mapsHrefFor(p) {
+  if (p.maps_url) return p.maps_url;
+  if (hasCoords(p)) return `https://www.google.com/maps/search/?api=1&query=${p.lat},${p.lng}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name || "")}`;
+}
+
+function updateExportButtons() {
+  const places = shortlistPlaces(currentNotebook);
+  const any = places.length > 0;
+  if (btnOpenInMaps) btnOpenInMaps.disabled = !any;
+  if (btnDownloadKML) btnDownloadKML.disabled = !any;
+  if (btnDownloadCSV) btnDownloadCSV.disabled = !any;
+}
+
+// ─── Google Maps multi-stop directions (cap 10 stops) ───────────────
+function buildMapsDirUrl(places, maxStops = MAPS_DIR_MAX_STOPS) {
+  const stops = places.slice(0, maxStops);
+  const parts = stops.map((p) => {
+    if (hasCoords(p)) return `${p.lat},${p.lng}`;
+    return encodeURIComponent(`${p.name || ""} ${p.address || ""}`.trim());
+  });
+  return `https://www.google.com/maps/dir/${parts.join("/")}`;
+}
+
+function openSelectedInMaps() {
+  const places = shortlistPlaces(currentNotebook);
+  if (!places.length) return;
+  const overflow = places.length > MAPS_DIR_MAX_STOPS;
+  if (overflow) {
+    showToast(`⚠️ Directions limited to ~${MAPS_DIR_MAX_STOPS} stops. Opening first ${MAPS_DIR_MAX_STOPS} of ${places.length}. Use KML for the full set.`);
+  }
+  window.open(buildMapsDirUrl(places), "_blank", "noopener");
+}
+
+// ─── KML (full set, skips places without coordinates) ───────────────
+function buildKML(places) {
+  const sorted = [...places].sort((a, b) => (b.combined_score || b.taste_match_score || 0) - (a.combined_score || a.taste_match_score || 0));
+  let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n<name>Itinerary — GMaps Personal Assistant</name>\n`;
+  let skipped = 0;
+  for (const p of sorted) {
+    if (!hasCoords(p)) { skipped++; continue; } // skip blank pins — cleaner My Maps import
+    const score = Math.round(p.combined_score || p.taste_match_score || 0);
+    const title = `(${score}) ${p.name || "Place"}`;
+    kml += `<Placemark>\n<name><![CDATA[${title}]]></name>\n`;
+    const desc = [
+      p.match_reason || "",
+      p.intent_score != null ? `Intent: ${p.intent_score}/10` : "",
+      p.taste_score != null ? `Taste: ${p.taste_score}/10` : "",
+      p.rating != null ? `Google: ${p.rating}` : "",
+      p.price_level || "",
+      p.address || "",
+      p.maps_url || "",
+    ].filter(Boolean).join("\n");
+    if (desc) kml += `<description><![CDATA[${desc}]]></description>\n`;
+    kml += `<Point><coordinates>${p.lng},${p.lat},0</coordinates></Point>\n</Placemark>\n`;
+  }
+  kml += `</Document>\n</kml>`;
+  return { kml, skipped };
+}
+
+function downloadKML() {
+  const places = shortlistPlaces(currentNotebook);
+  if (!places.length) return;
+  const { kml, skipped } = buildKML(places);
+  downloadFile(kml, "itinerary-places.kml", "application/vnd.google-earth.kml+xml");
+  if (skipped > 0) {
+    showToast(`⚠️ Skipped ${skipped} place(s) with no coordinates in KML.`);
+  }
+}
+
+// ─── CSV (RFC4180 quoting incl. dual scores) ─────
+function csvEscape(value) {
+  return `"${String(value ?? "").replace(/"/g, '""').replace(/\r?\n/g, " ")}"`;
+}
+
+function buildCSV(places) {
+  const sorted = [...places].sort((a, b) => (b.combined_score || b.taste_match_score || 0) - (a.combined_score || a.taste_match_score || 0));
+  let csv = "Name,Score,IntentScore,TasteScore,ScoredBy,Rating,Price,Address,GoogleMaps,Lat,Lng,Id\n";
+  for (const p of sorted) {
+    const fields = [
+      p.name || "",
+      p.combined_score ?? p.taste_match_score ?? "",
+      p.intent_score ?? "",
+      p.taste_score ?? "",
+      p.scored_by || "llm",
+      p.rating ?? "",
+      p.price_level || "",
+      p.address || "",
+      p.maps_url || mapsHrefFor(p),
+      p.lat ?? "",
+      p.lng ?? "",
+      p.id || "",
+    ];
+    csv += fields.map(csvEscape).join(",") + "\n";
+  }
+  return csv;
+}
+
+function downloadCSV() {
+  const places = shortlistPlaces(currentNotebook);
+  if (!places.length) return;
+  downloadFile(buildCSV(places), "itinerary-places.csv", "text/csv");
+}
+
+function downloadFile(content, filename, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ─── Map rendering ──────────────────────────────────────────────────
+function renderItineraryMap() {
+  const mapEl = document.getElementById('itineraryMap');
+  if (!mapEl || typeof L === 'undefined') return;
+
+  const places = shortlistPlaces(currentNotebook).filter(hasCoords);
+
+  if (itineraryMapInstance) {
+    itineraryMapInstance.remove();
+    itineraryMapInstance = null;
+    itineraryMarkers.length = 0;
+  }
+
+  if (!places.length) {
+    mapEl.innerHTML = '';
+    if (mapEmptyState) mapEmptyState.classList.remove('hidden');
+    renderItineraryStops();
+    updateExportButtons();
+    return;
+  }
+  if (mapEmptyState) mapEmptyState.classList.add('hidden');
+
+  itineraryMapInstance = L.map(mapEl, { scrollWheelZoom: false });
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: "&copy; OpenStreetMap &copy; CARTO",
+    maxZoom: 19,
+  }).addTo(itineraryMapInstance);
+
+  const bounds = [];
+  places.forEach((p, idx) => {
+    const key = placeKey(p);
+    const order = idx + 1;
+    const score = Math.round(p.combined_score || p.taste_match_score || 0);
+    const color = scoreColor(p.combined_score || p.taste_match_score || 0);
+    const icon = L.divIcon({
+      className: "custom-marker-wrap",
+      html: `<div class="custom-marker" style="background:${color}" title="${escapeHtml(p.name || "")}"><span>${order}</span></div>`,
+      iconSize: [28, 28],
+      iconAnchor: [14, 28],
+      popupAnchor: [0, -24],
+    });
+    const marker = L.marker([Number(p.lat), Number(p.lng)], { icon }).addTo(itineraryMapInstance);
+    const popupHtml = `
+      <strong>${escapeHtml(p.name || "")}</strong><br>
+      <span style="color:${color}">★ ${score}/10</span>
+      ${p.intent_score != null ? ` · I ${Math.round(p.intent_score)}` : ""}
+      ${p.taste_score != null ? ` · T ${Math.round(p.taste_score)}` : ""}
+      ${p.rating != null ? `<br>⭐ ${p.rating}` : ""}
+      ${p.match_reason ? `<br>${escapeHtml(p.match_reason)}` : ""}
+      <br><a href="${escapeHtml(mapsHrefFor(p))}" target="_blank" rel="noopener">Open in Maps →</a>
+    `;
+    marker.bindPopup(popupHtml);
+    marker.on("click", () => highlightStop(key, { openPopup: true, scrollCard: true }));
+    itineraryMarkers.push({ key, marker, place: p });
+    bounds.push([Number(p.lat), Number(p.lng)]);
+  });
+
+  if (bounds.length === 1) itineraryMapInstance.setView(bounds[0], 14);
+  else itineraryMapInstance.fitBounds(bounds, { padding: [40, 40] });
+
+  renderItineraryStops();
+  updateExportButtons();
+}
+
+function renderItineraryStops() {
+  if (!itineraryStops) return;
+  const places = shortlistPlaces(currentNotebook);
+  itineraryStops.innerHTML = '';
+  if (!places.length) return;
+  places.forEach((p, idx) => {
+    const key = placeKey(p);
+    const card = document.createElement('div');
+    card.className = 'stop-card';
+    card.setAttribute('data-place-key', key);
+    card.innerHTML = `
+      <span class="stop-order">${idx + 1}</span>
+      <div class="stop-body">
+        <div class="stop-name">${escapeHtml(p.name || "Place")}</div>
+        <div class="stop-meta">
+          ${p.intent_score != null ? `<span class="score-chip">I ${Math.round(p.intent_score)}</span>` : ""}
+          ${p.taste_score != null ? `<span class="score-chip">T ${Math.round(p.taste_score)}</span>` : ""}
+          ${p.rating != null ? `<span>⭐ ${p.rating}</span>` : ""}
+          ${!hasCoords(p) ? `<span class="no-coords">no coords — not on map</span>` : ""}
+        </div>
+      </div>
+      <a class="maps-link" href="${escapeHtml(mapsHrefFor(p))}" target="_blank" rel="noopener">Maps ↗</a>
+    `;
+    card.addEventListener('click', () => highlightStop(key, { openPopup: true, scrollCard: false }));
+    itineraryStops.appendChild(card);
+  });
+}
+
+function highlightStop(key, { openPopup = true, scrollCard = true } = {}) {
+  itineraryStops.querySelectorAll('.stop-card').forEach((el) => {
+    el.classList.toggle('highlighted', el.getAttribute('data-place-key') === key);
+    if (scrollCard && el.getAttribute('data-place-key') === key) {
+      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  });
+  const entry = itineraryMarkers.find((m) => m.key === key);
+  if (entry && openPopup && itineraryMapInstance) {
+    itineraryMapInstance.panTo([Number(entry.place.lat), Number(entry.place.lng)]);
+    entry.marker.openPopup();
+  }
+}
+
+// ─── Export button wiring ───────────────────────────────────────────
+if (btnOpenInMaps) btnOpenInMaps.addEventListener('click', openSelectedInMaps);
+if (btnDownloadKML) btnDownloadKML.addEventListener('click', downloadKML);
+if (btnDownloadCSV) btnDownloadCSV.addEventListener('click', downloadCSV);
+
+// Non-blocking toast (replaces blocking alert() for feedback/export notices)
+function showToast(message) {
+  let toastHost = document.getElementById('toastHost');
+  if (!toastHost) {
+    toastHost = document.createElement('div');
+    toastHost.id = 'toastHost';
+    document.body.appendChild(toastHost);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  toastHost.appendChild(toast);
+  setTimeout(() => toast.classList.add('visible'), 10);
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+// ─── "Learned from your feedback" chips ─────────────────────────
+// The memory loop made visible: renders deterministic chips from the
+// backend-computed avoid/like patterns — never invents data.
+async function renderLearnedChips() {
+  const container = document.getElementById('nbLearned');
+  if (!container) return;
+  try {
+    const res = await fetch(`${API_BASE}/api/feedback-summary?user_id=${encodeURIComponent(currentUserId)}&session_id=${encodeURIComponent(currentSessionId)}`);
+    if (!res.ok) { container.innerHTML = ''; return; }
+    const data = await res.json();
+    const chips = [];
+    (data.avoid_patterns || []).forEach(p => chips.push({ text: p, cls: 'learned-avoid' }));
+    (data.like_patterns || []).forEach(p => chips.push({ text: p, cls: 'learned-like' }));
+    if (!chips.length) { container.innerHTML = ''; return; }
+    container.innerHTML = '<div class="learned-title">🧠 Learned from your feedback</div>';
+    const wrap = document.createElement('div');
+    wrap.className = 'tags-container';
+    chips.forEach(c => {
+      const span = document.createElement('span');
+      span.className = `tag-pill ${c.cls}`;
+      span.textContent = c.text;
+      wrap.appendChild(span);
+    });
+    container.appendChild(wrap);
+  } catch (err) {
+    console.error('Learned chips failed:', err);
+  }
+}
