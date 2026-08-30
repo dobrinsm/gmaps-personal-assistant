@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -284,7 +285,28 @@ async def upload_takeout(user_id: str = "user_default", file: UploadFile = File(
         logger.error(f"Upload processing failed: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"Failed to process takeout export: {str(e)}")
 
-# Mount frontend static files if available
+# Runtime config endpoint + frontend static files
 frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+
+@app.get("/config.js", include_in_schema=False)
+async def config_js():
+    """Serve runtime config: the Maps JS key comes from the environment, never the image."""
+    key = os.getenv("GMAPS_API_KEY", "")
+    parts = [
+        'window.GMAPS_API_KEY = "%s";' % key,
+        'window.__gmReady = function () { window.__googleMapsLoaded = true; };',
+    ]
+    if key:
+        # Inject the async Maps JS loader only when a key is configured.
+        parts.append(
+            '(function(){var s=document.createElement("script");'
+            's.async=true;'
+            's.src="https://maps.googleapis.com/maps/api/js?key=' + key + '&loading=async&callback=window.__gmReady&v=weekly";'
+            'document.head.appendChild(s);})();'
+        )
+    return Response(content="\n".join(parts), media_type="application/javascript")
+
+
 if os.path.exists(frontend_dir):
     app.mount("/", StaticFiles(directory=frontend_dir, html=True), name="frontend")

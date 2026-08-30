@@ -745,7 +745,7 @@ function markedParse(text) {
 // ════════════════════════════════════════════════════════════════════
 
 let currentNotebook = null;
-let itineraryMapInstance = null; // Leaflet map instance
+let itineraryMapInstance = null; // Google Maps instance
 const itineraryMarkers = [];    // { key, marker, place }
 
 function scoreColor(score) {
@@ -887,15 +887,14 @@ function downloadFile(content, filename, mimeType) {
   URL.revokeObjectURL(url);
 }
 
-// ─── Map rendering ──────────────────────────────────────────────────
+// ─── Map rendering (Google Maps JS API) ─────────────────────────────
 function renderItineraryMap() {
   const mapEl = document.getElementById('itineraryMap');
-  if (!mapEl || typeof L === 'undefined') return;
+  if (!mapEl || typeof google === 'undefined' || !google.maps) return;
 
   const places = shortlistPlaces(currentNotebook).filter(hasCoords);
 
   if (itineraryMapInstance) {
-    itineraryMapInstance.remove();
     itineraryMapInstance = null;
     itineraryMarkers.length = 0;
   }
@@ -909,26 +908,44 @@ function renderItineraryMap() {
   }
   if (mapEmptyState) mapEmptyState.classList.add('hidden');
 
-  itineraryMapInstance = L.map(mapEl, { scrollWheelZoom: false });
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    attribution: "&copy; OpenStreetMap &copy; CARTO",
-    maxZoom: 19,
-  }).addTo(itineraryMapInstance);
+  // Maps JS loads async via /config.js; retry shortly if not ready yet.
+  if (!window.__googleMapsLoaded) {
+    setTimeout(renderItineraryMap, 400);
+    return;
+  }
 
-  const bounds = [];
+  // Fresh inner container each render (Maps owns its DOM subtree).
+  mapEl.innerHTML = '<div id="gmapsInner" style="width:100%;height:100%"></div>';
+  const inner = document.getElementById('gmapsInner');
+
+  itineraryMapInstance = new google.maps.Map(inner, {
+    center: { lat: Number(places[0].lat), lng: Number(places[0].lng) },
+    zoom: 13,
+    scrollwheel: false,
+  });
+
+  const bounds = new google.maps.LatLngBounds();
+  let pinned = 0;
   places.forEach((p, idx) => {
     const key = placeKey(p);
     const order = idx + 1;
     const score = Math.round(p.combined_score || p.taste_match_score || 0);
     const color = scoreColor(p.combined_score || p.taste_match_score || 0);
-    const icon = L.divIcon({
-      className: "custom-marker-wrap",
-      html: `<div class="custom-marker" style="background:${color}" title="${escapeHtml(p.name || "")}"><span>${order}</span></div>`,
-      iconSize: [28, 28],
-      iconAnchor: [14, 28],
-      popupAnchor: [0, -24],
+    const pos = { lat: Number(p.lat), lng: Number(p.lng) };
+    const marker = new google.maps.Marker({
+      map: itineraryMapInstance,
+      position: pos,
+      title: `${order}. ${p.name || "Place"} — ${score}/10`,
+      label: { text: String(order), color: "#ffffff", fontSize: "12px", fontWeight: "600" },
+      icon: {
+        path: google.maps.SymbolPath.CIRCLE,
+        scale: 12,
+        fillColor: color,
+        fillOpacity: 1,
+        strokeColor: "#1b1e27",
+        strokeWeight: 2,
+      },
     });
-    const marker = L.marker([Number(p.lat), Number(p.lng)], { icon }).addTo(itineraryMapInstance);
     const popupHtml = `
       <strong>${escapeHtml(p.name || "")}</strong><br>
       <span style="color:${color}">★ ${score}/10</span>
@@ -938,14 +955,22 @@ function renderItineraryMap() {
       ${p.match_reason ? `<br>${escapeHtml(p.match_reason)}` : ""}
       <br><a href="${escapeHtml(mapsHrefFor(p))}" target="_blank" rel="noopener">Open in Maps →</a>
     `;
-    marker.bindPopup(popupHtml);
-    marker.on("click", () => highlightStop(key, { openPopup: true, scrollCard: true }));
-    itineraryMarkers.push({ key, marker, place: p });
-    bounds.push([Number(p.lat), Number(p.lng)]);
+    const iw = new google.maps.InfoWindow({ content: popupHtml });
+    marker.addListener("click", () => {
+      iw.open({ map: itineraryMapInstance, anchor: marker });
+      highlightStop(key, { openPopup: false, scrollCard: true });
+    });
+    itineraryMarkers.push({ key, marker, place: p, infoWindow: iw });
+    bounds.extend(pos);
+    pinned += 1;
   });
 
-  if (bounds.length === 1) itineraryMapInstance.setView(bounds[0], 14);
-  else itineraryMapInstance.fitBounds(bounds, { padding: [40, 40] });
+  if (pinned === 1) {
+    itineraryMapInstance.setCenter(bounds.getCenter());
+    itineraryMapInstance.setZoom(14);
+  } else {
+    itineraryMapInstance.fitBounds(bounds, 40);
+  }
 
   renderItineraryStops();
   updateExportButtons();
@@ -988,8 +1013,8 @@ function highlightStop(key, { openPopup = true, scrollCard = true } = {}) {
   });
   const entry = itineraryMarkers.find((m) => m.key === key);
   if (entry && openPopup && itineraryMapInstance) {
-    itineraryMapInstance.panTo([Number(entry.place.lat), Number(entry.place.lng)]);
-    entry.marker.openPopup();
+    itineraryMapInstance.panTo({ lat: Number(entry.place.lat), lng: Number(entry.place.lng) });
+    if (entry.infoWindow) entry.infoWindow.open({ map: itineraryMapInstance, anchor: entry.marker });
   }
 }
 

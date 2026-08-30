@@ -18,7 +18,7 @@ GMaps Personal Assistant turns travel planning into a collaborative co-discovery
 2. **Takes Notes (Agent Notebook)** — autonomously maintains confirmed preferences, itinerary notes, and a shortlist in a live structured notebook.
 3. **Remembers** — your Google Takeout saved places build a taste profile; every 👍 / 🚩 / 🎭 feedback is stored with place context and read back into the agent's memory on the next turn, adapting taste weights bidirectionally (clamped 0.2–1.0).
 4. **Proves** — every recommendation carries honest dual scores **`Intent 8 · Taste 7 → 7.5`**. Places the model never scored are visibly labeled *"heuristic shortlist"* — scores are never fabricated.
-5. **Delivers** — the shortlist becomes an itinerary: a Leaflet map plus one-click **Google Maps directions** (≤10 stops), **KML**, and **CSV** export.
+5. **Delivers** — the shortlist becomes an itinerary: a **Google Maps** itinerary pane (numbered, score-colored pins, honest-score popups) plus one-click **Google Maps directions** (≤10 stops), **KML**, and **CSV** export.
 
 ---
 
@@ -56,7 +56,8 @@ GMaps Personal Assistant turns travel planning into a collaborative co-discovery
   - **Cloud Run** — serverless containerized backend.
   - **Cloud Firestore** — taste vectors, session state, feedback memory, agent notebooks.
   - **Vertex AI** — enterprise model execution.
-  - **Places API (New)** — live venue & geo search.
+  - [x] **Places API (New)** — live venue & geo search.
+  - [x] **Maps JavaScript API** — client-side itinerary basemap (no third-party tiles).
 
 ---
 
@@ -66,6 +67,7 @@ GMaps Personal Assistant turns travel planning into a collaborative co-discovery
 - Python 3.11+
 - A Google Cloud project with **Firestore** and **Vertex AI** enabled, and a service account key with `roles/datastore.user` + Vertex AI User
 - A **Places API (New)** key
+- A **Maps JavaScript API** key (for the itinerary map; optional in local dev — the map pane stays empty without it)
 
 ```bash
 git clone https://github.com/dobrinsm/gmaps-personal-assistant.git
@@ -99,6 +101,8 @@ Tests fake Firestore/GenAI/Places — nothing external is required. CI runs the 
 
 All knobs and defaults are documented in [`.env.example`](.env.example): model, Places key, ranking weights (`INTENT_WEIGHT` / `TASTE_WEIGHT`), the `RANKING_MODE=dual|legacy` rollback flag, and feedback-loop steps/clamps. Config is env-only — the Dockerfile strips `backend/.env` from images.
 
+**Maps JavaScript API key** (`GMAPS_API_KEY`): injected at runtime via the `/config.js` endpoint — the key is served from the Cloud Run environment and never baked into the image or committed. When set, the backend injects the async Maps JS loader; when unset, the app degrades gracefully (chat/notebook/exports still work, the map pane stays empty). Restrict the key to Maps JavaScript API + your service URLs in Google Cloud Credentials.
+
 ## ☁️ Deploying to Google Cloud Run
 
 Docker → Artifact Registry → Cloud Run v2 API:
@@ -111,8 +115,13 @@ export REGISTRY=$REGION-docker.pkg.dev/$PROJECT/gmaps-assistant
 docker build -t "$REGISTRY/app:v1" .
 docker push "$REGISTRY/app:v1"
 
-# Patch the Cloud Run v2 service with the image + env vars (never a baked .env),
-# then grant roles/run.invoker to allUsers if you want a public demo.
+# Deploy with env vars (never a baked .env). GMAPS_API_KEY powers the itinerary map.
+gcloud run deploy gmaps-assistant \
+  --region $REGION --project $PROJECT \
+  --image "$REGISTRY/app:v1" \
+  --update-env-vars GMAPS_API_KEY=your-maps-js-key
+
+# Then grant roles/run.invoker to allUsers if you want a public demo.
 ```
 
 The runtime service account needs Cloud Run Invoker/Admin, Artifact Registry write, `roles/datastore.user`, and Vertex AI User. If runtime Firestore/Vertex calls fail, check those IAM roles first.
@@ -123,7 +132,7 @@ The runtime service account needs Cloud Run Invoker/Admin, Artifact Registry wri
 - **True agentic collaboration**: multi-turn dialogue, clarifying questions, and a live notebook instead of a static search box.
 - **Honest dual-score ranking**: intent × taste with a heuristic prefilter, batch retries, and labeled fallback — no fabricated scores, ever.
 - **Closing the feedback loop**: feedback with place context is aggregated and injected into the agent's memory; weights adapt bidirectionally with clamps.
-- **From conversation to itinerary**: map + Google Maps / KML / CSV export generated entirely client-side.
+- **From conversation to itinerary**: Google Maps itinerary pane + Google Maps / KML / CSV export generated entirely client-side — the same Maps stack that discovers the places also displays and delivers them.
 
 ## 📄 License
 MIT License — see [LICENSE](LICENSE).
