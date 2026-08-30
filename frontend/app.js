@@ -150,7 +150,7 @@ async function loadUserProfile() {
     const res = await fetch(`${API_BASE}/api/profile/${currentUserId}`);
     if (res.ok) {
       const data = await res.json();
-      renderUserProfile(data.taste_profile);
+      renderUserProfile(data);
     }
   } catch (err) {
     console.error('Failed to load user profile:', err);
